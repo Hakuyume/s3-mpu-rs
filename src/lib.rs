@@ -193,8 +193,8 @@ mod tests {
         let mut downloaded = Vec::new();
         client
             .get_object(GetObjectRequest {
-                bucket: bucket,
-                key: key,
+                bucket,
+                key,
                 ..GetObjectRequest::default()
             })
             .await
