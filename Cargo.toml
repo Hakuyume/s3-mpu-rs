@@ -12,9 +12,9 @@ native-tls = ["rusoto_core/native-tls", "rusoto_s3/native-tls"]
 rustls = ["rusoto_core/rustls", "rusoto_s3/rustls"]
 
 [dependencies]
+futures = "0.3"
 rusoto_core = { version = "0.46", default-features = false }
 rusoto_s3 = { version = "0.46", default-features = false }
-tokio = { version = "1", features = ["io-util"] }
 
 [dev-dependencies]
 rand = "0.8"

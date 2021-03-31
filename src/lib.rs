@@ -1,33 +1,40 @@
+use futures::{Stream, StreamExt};
 use rusoto_core::RusotoError;
 use rusoto_s3::{
     CompleteMultipartUploadError, CompleteMultipartUploadRequest, CompletedMultipartUpload,
     CompletedPart, CreateMultipartUploadError, CreateMultipartUploadRequest, UploadPartError,
     UploadPartRequest, S3,
 };
-use tokio::io::{self, AsyncRead, AsyncReadExt};
+use std::cmp;
+use std::mem;
 
 const MIN_PART_SIZE: usize = 5 << 20;
 
 pub async fn multipart_upload<C, B, E>(
     client: &C,
-    mut body: B,
+    body: B,
     bucket: &str,
     key: &str,
 ) -> Result<(), E>
 where
     C: S3,
-    B: Unpin + AsyncRead,
-    E: From<io::Error>
-        + From<RusotoError<CreateMultipartUploadError>>
+    B: Stream<Item = Result<Vec<u8>, E>>,
+    E: From<RusotoError<CreateMultipartUploadError>>
         + From<RusotoError<UploadPartError>>
         + From<RusotoError<CompleteMultipartUploadError>>,
 {
+    futures::pin_mut!(body);
+
     let mut multipart_upload = MultipartUpload::create(client, bucket, key).await?;
 
-    let mut buf = Vec::with_capacity(MIN_PART_SIZE * 2);
-    while body.read_buf(&mut buf).await? > 0 {
-        if buf.len() >= MIN_PART_SIZE {
-            multipart_upload.upload(buf.split_off(0)).await?;
+    let mut buf = Vec::new();
+    while let Some(chunk) = body.next().await {
+        buf.extend_from_slice(&chunk?);
+        while buf.len() >= MIN_PART_SIZE {
+            let remaining = buf.split_off(cmp::min(buf.len(), MIN_PART_SIZE * 2));
+            multipart_upload
+                .upload(mem::replace(&mut buf, remaining))
+                .await?;
         }
     }
     multipart_upload.upload(buf).await?;
@@ -121,6 +128,8 @@ mod tests {
     use rusoto_s3::{GetObjectRequest, S3Client, S3};
     use std::env;
     use std::error::Error;
+    use std::iter;
+    use std::mem;
     use tokio::io::AsyncReadExt;
 
     async fn check(size: usize) {
@@ -143,9 +152,24 @@ mod tests {
         let key = format!("test-{}", size);
         let data = (0..size).map(|_| rng.gen()).collect::<Vec<u8>>();
 
-        multipart_upload::<_, _, Box<dyn Error>>(&client, &*data, &bucket, &key)
-            .await
-            .unwrap();
+        multipart_upload::<_, _, Box<dyn Error>>(
+            &client,
+            {
+                let mut data = data.clone();
+                futures::stream::iter(iter::from_fn(move || {
+                    if data.is_empty() {
+                        None
+                    } else {
+                        let remaining = data.split_off(rng.gen_range(0..=data.len()));
+                        Some(Ok(mem::replace(&mut data, remaining)))
+                    }
+                }))
+            },
+            &bucket,
+            &key,
+        )
+        .await
+        .unwrap();
 
         let mut downloaded = Vec::new();
         client
