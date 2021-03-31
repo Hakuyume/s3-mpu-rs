@@ -142,6 +142,7 @@ where
 mod tests {
     use super::{multipart_upload, MAX_PART_SIZE, MIN_PART_SIZE};
     use bytes::Bytes;
+    use rand::seq::SliceRandom;
     use rand::Rng;
     use rusoto_core::request::HttpClient;
     use rusoto_core::Region;
@@ -149,7 +150,6 @@ mod tests {
     use rusoto_s3::{GetObjectRequest, S3Client, S3};
     use std::env;
     use std::error::Error;
-    use std::iter;
     use tokio::io::AsyncReadExt;
 
     async fn check(size: usize) {
@@ -171,24 +171,22 @@ mod tests {
         let bucket = env::var("BUCKET").unwrap();
         let key = format!("test-{}", size);
         let data = (0..size).map(|_| rng.gen()).collect::<Bytes>();
+        let chunks = {
+            let mut sizes = Vec::new();
+            let mut total = 0;
+            while total < data.len() {
+                let size = rng.gen_range(0..=data.len() - total);
+                sizes.push(size);
+                total += size;
+            }
+            sizes.shuffle(&mut rng);
+            let mut data = data.clone();
+            futures::stream::iter(sizes.into_iter().map(move |size| Ok(data.split_to(size))))
+        };
 
-        multipart_upload::<_, _, Box<dyn Error>>(
-            &client,
-            {
-                let mut data = data.clone();
-                futures::stream::iter(iter::from_fn(move || {
-                    if data.is_empty() {
-                        None
-                    } else {
-                        Some(Ok(data.split_to(rng.gen_range(0..=data.len()))))
-                    }
-                }))
-            },
-            &bucket,
-            &key,
-        )
-        .await
-        .unwrap();
+        multipart_upload::<_, _, Box<dyn Error>>(&client, chunks, &bucket, &key)
+            .await
+            .unwrap();
 
         let mut downloaded = Vec::new();
         client
