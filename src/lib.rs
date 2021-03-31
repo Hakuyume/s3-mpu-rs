@@ -1,5 +1,6 @@
+use bytes::Bytes;
 use futures::{Stream, StreamExt};
-use rusoto_core::RusotoError;
+use rusoto_core::{ByteStream, RusotoError};
 use rusoto_s3::{
     CompleteMultipartUploadError, CompleteMultipartUploadRequest, CompletedMultipartUpload,
     CompletedPart, CreateMultipartUploadError, CreateMultipartUploadRequest, UploadPartError,
@@ -9,6 +10,7 @@ use std::cmp;
 use std::mem;
 
 const MIN_PART_SIZE: usize = 5 << 20;
+const MAX_PART_SIZE: usize = MIN_PART_SIZE * 2;
 
 pub async fn multipart_upload<C, B, E>(
     client: &C,
@@ -18,7 +20,7 @@ pub async fn multipart_upload<C, B, E>(
 ) -> Result<(), E>
 where
     C: S3,
-    B: Stream<Item = Result<Vec<u8>, E>>,
+    B: Stream<Item = Result<Bytes, E>>,
     E: From<RusotoError<CreateMultipartUploadError>>
         + From<RusotoError<UploadPartError>>
         + From<RusotoError<CompleteMultipartUploadError>>,
@@ -27,17 +29,28 @@ where
 
     let mut multipart_upload = MultipartUpload::create(client, bucket, key).await?;
 
-    let mut buf = Vec::new();
+    let mut chunks = Vec::new();
+    let mut size = 0;
     while let Some(chunk) = body.next().await {
-        buf.extend_from_slice(&chunk?);
-        while buf.len() >= MIN_PART_SIZE {
-            let remaining = buf.split_off(cmp::min(buf.len(), MIN_PART_SIZE * 2));
+        let mut chunk = chunk?;
+        while size + chunk.len() >= MIN_PART_SIZE {
+            let len = cmp::min(chunk.len(), MAX_PART_SIZE - size);
+            chunks.push(chunk.split_to(len));
+            size += len;
             multipart_upload
-                .upload(mem::replace(&mut buf, remaining))
+                .upload(
+                    mem::replace(&mut chunks, Vec::new()),
+                    mem::replace(&mut size, 0) as _,
+                )
                 .await?;
         }
+        if !chunk.is_empty() {
+            let len = chunk.len();
+            chunks.push(chunk);
+            size += len;
+        }
     }
-    multipart_upload.upload(buf).await?;
+    multipart_upload.upload(chunks, size as _).await?;
 
     multipart_upload.complete().await?;
     Ok(())
@@ -80,12 +93,19 @@ where
         })
     }
 
-    async fn upload(&mut self, body: Vec<u8>) -> Result<(), RusotoError<UploadPartError>> {
+    async fn upload(
+        &mut self,
+        body: Vec<Bytes>,
+        content_length: i64,
+    ) -> Result<(), RusotoError<UploadPartError>> {
         let e_tag = self
             .client
             .upload_part(UploadPartRequest {
-                body: Some(body.into()),
+                body: Some(ByteStream::new(futures::stream::iter(
+                    body.into_iter().map(Ok),
+                ))),
                 bucket: self.bucket.to_owned(),
+                content_length: Some(content_length),
                 key: self.key.to_owned(),
                 part_number: self.part_number,
                 upload_id: self.upload_id.clone(),
@@ -120,7 +140,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{multipart_upload, MIN_PART_SIZE};
+    use super::{multipart_upload, MAX_PART_SIZE, MIN_PART_SIZE};
+    use bytes::Bytes;
     use rand::Rng;
     use rusoto_core::request::HttpClient;
     use rusoto_core::Region;
@@ -129,7 +150,6 @@ mod tests {
     use std::env;
     use std::error::Error;
     use std::iter;
-    use std::mem;
     use tokio::io::AsyncReadExt;
 
     async fn check(size: usize) {
@@ -150,7 +170,7 @@ mod tests {
 
         let bucket = env::var("BUCKET").unwrap();
         let key = format!("test-{}", size);
-        let data = (0..size).map(|_| rng.gen()).collect::<Vec<u8>>();
+        let data = (0..size).map(|_| rng.gen()).collect::<Bytes>();
 
         multipart_upload::<_, _, Box<dyn Error>>(
             &client,
@@ -160,8 +180,7 @@ mod tests {
                     if data.is_empty() {
                         None
                     } else {
-                        let remaining = data.split_off(rng.gen_range(0..=data.len()));
-                        Some(Ok(mem::replace(&mut data, remaining)))
+                        Some(Ok(data.split_to(rng.gen_range(0..=data.len()))))
                     }
                 }))
             },
@@ -196,11 +215,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_exact() {
-        check(MIN_PART_SIZE * 2).await;
+        check(MAX_PART_SIZE).await;
     }
 
     #[tokio::test]
     async fn test_large() {
-        check(MIN_PART_SIZE * 5 / 2).await;
+        check(MIN_PART_SIZE * 7 / 2).await;
     }
 }
