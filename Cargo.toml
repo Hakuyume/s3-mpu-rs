@@ -6,4 +6,17 @@ edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+default = ["native-tls"]
+native-tls = ["rusoto_core/native-tls", "rusoto_s3/native-tls"]
+rustls = ["rusoto_core/rustls", "rusoto_s3/rustls"]
+
 [dependencies]
+rusoto_core = { version = "0.46", default-features = false }
+rusoto_s3 = { version = "0.46", default-features = false }
+tokio = { version = "1", features = ["io-util"] }
+
+[dev-dependencies]
+rand = "0.8"
+rusoto_credential = "0.46"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
