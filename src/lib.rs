@@ -209,6 +209,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_large() {
-        check(*PART_SIZE.start() / 2 * 5 / 2).await;
+        check(*PART_SIZE.start() * 5 / 2).await;
     }
 }
