@@ -8,15 +8,17 @@ use rusoto_s3::{
 };
 use std::cmp;
 use std::mem;
+use std::ops::RangeInclusive;
 
-const MIN_PART_SIZE: usize = 5 << 20;
-const MAX_PART_SIZE: usize = MIN_PART_SIZE * 2;
+// https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html
+pub const PART_SIZE: RangeInclusive<usize> = (5 << 20)..=(5 << 30);
 
 pub async fn multipart_upload<C, B, E>(
     client: &C,
     body: B,
     bucket: &str,
     key: &str,
+    part_size: &RangeInclusive<usize>,
 ) -> Result<(), E>
 where
     C: S3,
@@ -33,8 +35,8 @@ where
     let mut size = 0;
     while let Some(chunk) = body.next().await {
         let mut chunk = chunk?;
-        while size + chunk.len() >= MIN_PART_SIZE {
-            let len = cmp::min(chunk.len(), MAX_PART_SIZE - size);
+        while size + chunk.len() >= *part_size.start() {
+            let len = cmp::min(chunk.len(), *part_size.end() - size);
             chunks.push(chunk.split_to(len));
             size += len;
             multipart_upload
@@ -140,32 +142,21 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{multipart_upload, MAX_PART_SIZE, MIN_PART_SIZE};
+    use super::{multipart_upload, PART_SIZE};
     use bytes::Bytes;
     use rand::seq::SliceRandom;
     use rand::Rng;
-    use rusoto_core::request::HttpClient;
     use rusoto_core::Region;
-    use rusoto_credential::StaticProvider;
     use rusoto_s3::{GetObjectRequest, S3Client, S3};
     use std::env;
     use std::error::Error;
     use tokio::io::AsyncReadExt;
 
     async fn check(size: usize) {
-        let client = S3Client::new_with(
-            HttpClient::new().unwrap(),
-            StaticProvider::new(
-                env::var("AWS_ACCESS_KEY_ID").unwrap(),
-                env::var("AWS_SECRET_ACCESS_KEY").unwrap(),
-                None,
-                None,
-            ),
-            Region::Custom {
-                name: "custom".to_owned(),
-                endpoint: env::var("ENDPOINT").unwrap(),
-            },
-        );
+        let client = S3Client::new(Region::Custom {
+            name: "custom".to_owned(),
+            endpoint: env::var("ENDPOINT").unwrap(),
+        });
         let mut rng = rand::thread_rng();
 
         let bucket = env::var("BUCKET").unwrap();
@@ -184,7 +175,7 @@ mod tests {
             futures::stream::iter(sizes.into_iter().map(move |size| Ok(data.split_to(size))))
         };
 
-        multipart_upload::<_, _, Box<dyn Error>>(&client, chunks, &bucket, &key)
+        multipart_upload::<_, _, Box<dyn Error>>(&client, chunks, &bucket, &key, &PART_SIZE)
             .await
             .unwrap();
 
@@ -208,16 +199,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_small() {
-        check(MIN_PART_SIZE / 2).await;
+        check(*PART_SIZE.start() / 2).await;
     }
 
     #[tokio::test]
     async fn test_exact() {
-        check(MAX_PART_SIZE).await;
+        check(*PART_SIZE.start() * 2).await;
     }
 
     #[tokio::test]
     async fn test_large() {
-        check(MIN_PART_SIZE * 7 / 2).await;
+        check(*PART_SIZE.start() / 2 * 5 / 2).await;
     }
 }
