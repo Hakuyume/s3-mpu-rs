@@ -11,7 +11,7 @@ use std::mem;
 use std::ops::RangeInclusive;
 
 // https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html
-pub const PART_SIZE: RangeInclusive<usize> = (5 << 20)..=(5 << 30);
+pub const PART_SIZE: RangeInclusive<usize> = 5 << 20..=5 << 30;
 
 pub async fn multipart_upload<C, B, E>(
     client: &C,
