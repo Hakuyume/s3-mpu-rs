@@ -33,6 +33,10 @@ jobs:
       run: |
         rustup toolchain add nightly
         cargo +nightly update -Z minimal-versions
+        # https://github.com/rusoto/rusoto/pull/1925
+        cargo update --package async-trait --precise 0.1.9
+        cargo update --package percent-encoding --precise 2.1.0
+        cargo update --package serde --precise 1.0.103
     - run: rustup target add ${{ matrix.target }}
     - run: cargo build --verbose --target ${{ matrix.target }} --all-targets --no-default-features --features ${{ matrix.tls }}
     - run: cargo test --verbose --target ${{ matrix.target }} --no-default-features --features ${{ matrix.tls }}
