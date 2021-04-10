@@ -19,6 +19,12 @@ jobs:
         dependency-versions:
         - minimal
         - maximum
+        tls:
+        - native-tls
+        - rustls
+        exclude:
+        - target: x86_64-unknown-linux-musl
+          tls: native-tls
     steps:
     - uses: actions/checkout@v2
     - if: matrix.dependency-versions == 'minimal'
@@ -26,8 +32,8 @@ jobs:
         rustup toolchain add nightly
         cargo +nightly update -Z minimal-versions
     - run: rustup target add ${{ matrix.target }}
-    - run: cargo build --verbose --target ${{ matrix.target }} --all-targets
-    - run: cargo test --verbose --target ${{ matrix.target }}
+    - run: cargo build --verbose --target ${{ matrix.target }} --all-targets --no-default-features --features ${{ matrix.tls }}
+    - run: cargo test --verbose --target ${{ matrix.target }} --no-default-features --features ${{ matrix.tls }}
   lint:
     runs-on: ubuntu-latest
     steps:
