@@ -34,7 +34,8 @@ async fn check(size: usize) {
     let bucket = env::var("BUCKET").unwrap();
     let key = format!("test-{}", Uuid::new_v4());
     let data = (0..size).map(|_| rng.gen()).collect::<Bytes>();
-    multipart_upload::<_, _, Box<dyn Error>>(
+
+    let output = multipart_upload::<_, _, Box<dyn Error>>(
         &client,
         MultipartUploadRequest {
             body: futures::stream::iter(into_chunks(data.clone(), &mut rng).map(Ok)),
@@ -46,22 +47,27 @@ async fn check(size: usize) {
     .await
     .unwrap();
 
-    let mut downloaded = Vec::new();
-    client
+    assert_eq!(output.bucket.as_ref().unwrap(), &bucket);
+    assert_eq!(output.key.as_ref().unwrap(), &key);
+
+    let output = client
         .get_object(GetObjectRequest {
             bucket,
             key,
             ..GetObjectRequest::default()
         })
         .await
-        .unwrap()
+        .unwrap();
+
+    let mut buf = Vec::new();
+    output
         .body
         .unwrap()
         .into_async_read()
-        .read_to_end(&mut downloaded)
+        .read_to_end(&mut buf)
         .await
         .unwrap();
-    assert_eq!(&downloaded, &data);
+    assert_eq!(buf, data);
 }
 
 #[test]
