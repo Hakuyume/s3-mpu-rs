@@ -1,7 +1,7 @@
 mod split;
 
 use bytes::Bytes;
-use futures::{Stream, TryStreamExt};
+use futures::{Stream, TryFutureExt, TryStreamExt};
 use rusoto_core::{ByteStream, RusotoError};
 use rusoto_s3::{
     CompleteMultipartUploadError, CompleteMultipartUploadOutput, CompleteMultipartUploadRequest,
@@ -49,8 +49,8 @@ where
         .unwrap();
 
     let parts = split::split(body, part_size)
-        .and_then(|part| async {
-            let e_tag = client
+        .and_then(|part| {
+            client
                 .upload_part(UploadPartRequest {
                     body: Some(ByteStream::new(futures::stream::iter(
                         part.body.into_iter().map(Ok),
@@ -63,12 +63,14 @@ where
                     upload_id: upload_id.clone(),
                     ..UploadPartRequest::default()
                 })
-                .await?
-                .e_tag;
-            Ok(CompletedPart {
-                e_tag,
-                part_number: Some(part.part_number as _),
-            })
+                .map_ok({
+                    let part_number = part.part_number;
+                    move |output| CompletedPart {
+                        e_tag: output.e_tag,
+                        part_number: Some(part_number as _),
+                    }
+                })
+                .err_into()
         })
         .try_collect()
         .await?;
