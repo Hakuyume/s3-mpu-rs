@@ -46,6 +46,7 @@ jobs:
     - run: |
         docker run --detach --env SERVICES=s3 --publish 4566:4566 localstack/localstack
         docker run --network host curlimages/curl --head --retry 8 --retry-all-errors ${ENDPOINT}/health
+        docker run --env AWS_ACCESS_KEY_ID --env AWS_SECRET_ACCESS_KEY --network host amazon/aws-cli --endpoint-url ${ENDPOINT} s3 mb s3://${BUCKET}
     - run: cargo test --verbose --target ${{ matrix.target }} --no-default-features --features ${{ matrix.tls }}
   lint:
     runs-on: ubuntu-latest
