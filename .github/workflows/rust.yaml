@@ -6,7 +6,11 @@ on:
   pull_request:
 
 env:
+  AWS_ACCESS_KEY_ID: test
+  AWS_SECRET_ACCESS_KEY: test
+  BUCKET: rusoto-s3-mpu
   CARGO_TERM_COLOR: always
+  ENDPOINT: http://localhost:4566
 
 jobs:
   test:
@@ -39,6 +43,9 @@ jobs:
         cargo update --package serde --precise 1.0.103
     - run: rustup target add ${{ matrix.target }}
     - run: cargo build --verbose --target ${{ matrix.target }} --all-targets --no-default-features --features ${{ matrix.tls }}
+    - run: |
+        docker run --detach --env SERVICES=s3 --publish 4566:4566 localstack/localstack
+        curl --head --retry 8 --retry-all-errors ${ENDPOINT}/health
     - run: cargo test --verbose --target ${{ matrix.target }} --no-default-features --features ${{ matrix.tls }}
   lint:
     runs-on: ubuntu-latest
