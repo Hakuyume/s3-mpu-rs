@@ -7,6 +7,7 @@ use rusoto_s3::{GetObjectRequest, S3Client, S3};
 use std::env;
 use std::error::Error;
 use tokio::io::AsyncReadExt;
+use uuid::Uuid;
 
 async fn check(size: usize) {
     let client = S3Client::new(Region::Custom {
@@ -16,7 +17,7 @@ async fn check(size: usize) {
     let mut rng = rand::thread_rng();
 
     let bucket = env::var("BUCKET").unwrap();
-    let key = format!("test-{}", size);
+    let key = format!("test-{}", Uuid::new_v4());
     let data = (0..size).map(|_| rng.gen()).collect::<Bytes>();
     let chunks = {
         let mut sizes = Vec::new();
