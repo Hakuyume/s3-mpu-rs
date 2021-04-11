@@ -32,13 +32,13 @@ async fn check(size: usize) {
     let mut rng = rand::thread_rng();
 
     let bucket = env::var("BUCKET").unwrap();
-    let key = format!("test-{}", Uuid::new_v4());
-    let data = (0..size).map(|_| rng.gen()).collect::<Bytes>();
+    let body = (0..size).map(|_| rng.gen()).collect::<Bytes>();
+    let key = Uuid::new_v4().to_string();
 
     let output = multipart_upload::<_, _, Box<dyn Error>>(
         &client,
         MultipartUploadRequest {
-            body: futures::stream::iter(into_chunks(data.clone(), &mut rng).map(Ok)),
+            body: futures::stream::iter(into_chunks(body.clone(), &mut rng).map(Ok)),
             bucket: bucket.clone(),
             key: key.clone(),
         },
@@ -67,7 +67,7 @@ async fn check(size: usize) {
         .read_to_end(&mut buf)
         .await
         .unwrap();
-    assert_eq!(buf, data);
+    assert_eq!(buf, body);
 }
 
 #[test]
