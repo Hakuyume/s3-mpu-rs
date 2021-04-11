@@ -2,9 +2,9 @@ use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use rusoto_core::{ByteStream, RusotoError};
 use rusoto_s3::{
-    CompleteMultipartUploadError, CompleteMultipartUploadRequest, CompletedMultipartUpload,
-    CompletedPart, CreateMultipartUploadError, CreateMultipartUploadRequest, UploadPartError,
-    UploadPartRequest, S3,
+    CompleteMultipartUploadError, CompleteMultipartUploadOutput, CompleteMultipartUploadRequest,
+    CompletedMultipartUpload, CompletedPart, CreateMultipartUploadError,
+    CreateMultipartUploadRequest, UploadPartError, UploadPartRequest, S3,
 };
 use std::cmp;
 use std::mem;
@@ -22,11 +22,13 @@ where
     pub key: String,
 }
 
+pub type MultipartUploadOutput = CompleteMultipartUploadOutput;
+
 pub async fn multipart_upload<C, B, E>(
     client: &C,
     input: MultipartUploadRequest<B, E>,
     part_size: &RangeInclusive<usize>,
-) -> Result<(), E>
+) -> Result<MultipartUploadOutput, E>
 where
     C: S3,
     B: Stream<Item = Result<Bytes, E>>,
@@ -62,8 +64,7 @@ where
     }
     multipart_upload.upload(chunks, size as _).await?;
 
-    multipart_upload.complete().await?;
-    Ok(())
+    Ok(multipart_upload.complete().await?)
 }
 
 struct MultipartUpload<'a, C> {
@@ -132,7 +133,9 @@ where
         Ok(())
     }
 
-    async fn complete(self) -> Result<(), RusotoError<CompleteMultipartUploadError>> {
+    async fn complete(
+        self,
+    ) -> Result<CompleteMultipartUploadOutput, RusotoError<CompleteMultipartUploadError>> {
         self.client
             .complete_multipart_upload(CompleteMultipartUploadRequest {
                 bucket: self.bucket.to_owned(),
@@ -143,8 +146,7 @@ where
                 upload_id: self.upload_id,
                 ..CompleteMultipartUploadRequest::default()
             })
-            .await?;
-        Ok(())
+            .await
     }
 }
 
