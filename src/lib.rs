@@ -92,6 +92,7 @@ where
         }
     }
 
+    completed_parts.sort_by_key(|completed_part| completed_part.part_number);
     Ok(client
         .complete_multipart_upload(CompleteMultipartUploadRequest {
             bucket,
