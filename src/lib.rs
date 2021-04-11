@@ -2,9 +2,9 @@ use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use rusoto_core::{ByteStream, RusotoError};
 use rusoto_s3::{
-    CompleteMultipartUploadError, CompleteMultipartUploadRequest, CompletedMultipartUpload,
-    CompletedPart, CreateMultipartUploadError, CreateMultipartUploadRequest, UploadPartError,
-    UploadPartRequest, S3,
+    CompleteMultipartUploadError, CompleteMultipartUploadOutput, CompleteMultipartUploadRequest,
+    CompletedMultipartUpload, CompletedPart, CreateMultipartUploadError,
+    CreateMultipartUploadRequest, UploadPartError, UploadPartRequest, S3,
 };
 use std::cmp;
 use std::mem;
@@ -13,13 +13,22 @@ use std::ops::RangeInclusive;
 // https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html
 pub const PART_SIZE: RangeInclusive<usize> = 5 << 20..=5 << 30;
 
+pub struct MultipartUploadRequest<B, E>
+where
+    B: Stream<Item = Result<Bytes, E>>,
+{
+    pub body: B,
+    pub bucket: String,
+    pub key: String,
+}
+
+pub type MultipartUploadOutput = CompleteMultipartUploadOutput;
+
 pub async fn multipart_upload<C, B, E>(
     client: &C,
-    body: B,
-    bucket: &str,
-    key: &str,
-    part_size: &RangeInclusive<usize>,
-) -> Result<(), E>
+    input: MultipartUploadRequest<B, E>,
+    part_size: RangeInclusive<usize>,
+) -> Result<MultipartUploadOutput, E>
 where
     C: S3,
     B: Stream<Item = Result<Bytes, E>>,
@@ -27,9 +36,10 @@ where
         + From<RusotoError<UploadPartError>>
         + From<RusotoError<CompleteMultipartUploadError>>,
 {
+    let body = input.body;
     futures::pin_mut!(body);
 
-    let mut multipart_upload = MultipartUpload::create(client, bucket, key).await?;
+    let mut multipart_upload = MultipartUpload::create(client, &input.bucket, &input.key).await?;
 
     let mut chunks = Vec::new();
     let mut size = 0;
@@ -54,8 +64,7 @@ where
     }
     multipart_upload.upload(chunks, size as _).await?;
 
-    multipart_upload.complete().await?;
-    Ok(())
+    Ok(multipart_upload.complete().await?)
 }
 
 struct MultipartUpload<'a, C> {
@@ -124,7 +133,9 @@ where
         Ok(())
     }
 
-    async fn complete(self) -> Result<(), RusotoError<CompleteMultipartUploadError>> {
+    async fn complete(
+        self,
+    ) -> Result<CompleteMultipartUploadOutput, RusotoError<CompleteMultipartUploadError>> {
         self.client
             .complete_multipart_upload(CompleteMultipartUploadRequest {
                 bucket: self.bucket.to_owned(),
@@ -135,8 +146,7 @@ where
                 upload_id: self.upload_id,
                 ..CompleteMultipartUploadRequest::default()
             })
-            .await?;
-        Ok(())
+            .await
     }
 }
 
