@@ -13,11 +13,18 @@ use std::ops::RangeInclusive;
 // https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html
 pub const PART_SIZE: RangeInclusive<usize> = 5 << 20..=5 << 30;
 
+pub struct MultipartUploadRequest<B, E>
+where
+    B: Stream<Item = Result<Bytes, E>>,
+{
+    pub body: B,
+    pub bucket: String,
+    pub key: String,
+}
+
 pub async fn multipart_upload<C, B, E>(
     client: &C,
-    body: B,
-    bucket: &str,
-    key: &str,
+    input: MultipartUploadRequest<B, E>,
     part_size: &RangeInclusive<usize>,
 ) -> Result<(), E>
 where
@@ -27,9 +34,10 @@ where
         + From<RusotoError<UploadPartError>>
         + From<RusotoError<CompleteMultipartUploadError>>,
 {
+    let body = input.body;
     futures::pin_mut!(body);
 
-    let mut multipart_upload = MultipartUpload::create(client, bucket, key).await?;
+    let mut multipart_upload = MultipartUpload::create(client, &input.bucket, &input.key).await?;
 
     let mut chunks = Vec::new();
     let mut size = 0;

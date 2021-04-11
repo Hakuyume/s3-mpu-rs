@@ -1,4 +1,4 @@
-use super::{multipart_upload, PART_SIZE};
+use super::{multipart_upload, MultipartUploadRequest, PART_SIZE};
 use bytes::Bytes;
 use rand::seq::SliceRandom;
 use rand::Rng;
@@ -36,9 +36,11 @@ async fn check(size: usize) {
     let data = (0..size).map(|_| rng.gen()).collect::<Bytes>();
     multipart_upload::<_, _, Box<dyn Error>>(
         &client,
-        futures::stream::iter(into_chunks(data.clone(), &mut rng).map(Ok)),
-        &bucket,
-        &key,
+        MultipartUploadRequest {
+            body: futures::stream::iter(into_chunks(data.clone(), &mut rng).map(Ok)),
+            bucket: bucket.clone(),
+            key: key.clone(),
+        },
         &PART_SIZE,
     )
     .await
