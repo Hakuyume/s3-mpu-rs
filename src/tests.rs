@@ -41,7 +41,7 @@ async fn check(size: usize) {
             bucket: bucket.clone(),
             key: key.clone(),
         },
-        &PART_SIZE,
+        PART_SIZE,
     )
     .await
     .unwrap();

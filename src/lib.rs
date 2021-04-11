@@ -27,7 +27,7 @@ pub type MultipartUploadOutput = CompleteMultipartUploadOutput;
 pub async fn multipart_upload<C, B, E>(
     client: &C,
     input: MultipartUploadRequest<B, E>,
-    part_size: &RangeInclusive<usize>,
+    part_size: RangeInclusive<usize>,
 ) -> Result<MultipartUploadOutput, E>
 where
     C: S3,
