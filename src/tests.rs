@@ -9,6 +9,21 @@ use std::error::Error;
 use tokio::io::AsyncReadExt;
 use uuid::Uuid;
 
+fn into_chunks<R>(mut data: Bytes, rng: &mut R) -> impl Iterator<Item = Bytes>
+where
+    R: Rng,
+{
+    let mut sizes = Vec::new();
+    let mut total = 0;
+    while total < data.len() {
+        let size = rng.gen_range(0..=data.len() - total);
+        sizes.push(size);
+        total += size;
+    }
+    sizes.shuffle(rng);
+    sizes.into_iter().map(move |size| data.split_to(size))
+}
+
 async fn check(size: usize) {
     let client = S3Client::new(Region::Custom {
         name: "custom".to_owned(),
@@ -19,22 +34,15 @@ async fn check(size: usize) {
     let bucket = env::var("BUCKET").unwrap();
     let key = format!("test-{}", Uuid::new_v4());
     let data = (0..size).map(|_| rng.gen()).collect::<Bytes>();
-    let chunks = {
-        let mut sizes = Vec::new();
-        let mut total = 0;
-        while total < data.len() {
-            let size = rng.gen_range(0..=data.len() - total);
-            sizes.push(size);
-            total += size;
-        }
-        sizes.shuffle(&mut rng);
-        let mut data = data.clone();
-        futures::stream::iter(sizes.into_iter().map(move |size| Ok(data.split_to(size))))
-    };
-
-    multipart_upload::<_, _, Box<dyn Error>>(&client, chunks, &bucket, &key, &PART_SIZE)
-        .await
-        .unwrap();
+    multipart_upload::<_, _, Box<dyn Error>>(
+        &client,
+        futures::stream::iter(into_chunks(data.clone(), &mut rng).map(Ok)),
+        &bucket,
+        &key,
+        &PART_SIZE,
+    )
+    .await
+    .unwrap();
 
     let mut downloaded = Vec::new();
     client
@@ -52,6 +60,18 @@ async fn check(size: usize) {
         .await
         .unwrap();
     assert_eq!(&downloaded, &data);
+}
+
+#[test]
+fn test_into_chunks() {
+    let mut rng = rand::thread_rng();
+    let data = (0..65536).map(|_| rng.gen()).collect::<Bytes>();
+    assert_eq!(
+        into_chunks(data.clone(), &mut rng)
+            .flatten()
+            .collect::<Bytes>(),
+        data
+    );
 }
 
 #[tokio::test]
