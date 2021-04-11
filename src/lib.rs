@@ -1,14 +1,14 @@
 mod split;
 
 use bytes::Bytes;
-use futures::{Stream, StreamExt};
+use futures::future::Either;
+use futures::{FutureExt, Stream, StreamExt};
 use rusoto_core::{ByteStream, RusotoError};
 use rusoto_s3::{
     CompleteMultipartUploadError, CompleteMultipartUploadOutput, CompleteMultipartUploadRequest,
     CompletedMultipartUpload, CompletedPart, CreateMultipartUploadError,
     CreateMultipartUploadRequest, UploadPartError, UploadPartRequest, S3,
 };
-use split::Part;
 use std::ops::RangeInclusive;
 
 // https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html
@@ -37,93 +37,73 @@ where
         + From<RusotoError<UploadPartError>>
         + From<RusotoError<CompleteMultipartUploadError>>,
 {
-    let mut multipart_upload = MultipartUpload::create(client, &input.bucket, &input.key).await?;
+    let MultipartUploadRequest { body, bucket, key } = input;
+    futures::pin_mut!(body);
 
-    let parts = split::split(input.body, part_size);
-    futures::pin_mut!(parts);
-    while let Some(part) = parts.next().await {
-        let part = part?;
-        multipart_upload.upload(part).await?;
+    let upload_id = client
+        .create_multipart_upload(CreateMultipartUploadRequest {
+            bucket: bucket.clone(),
+            key: key.clone(),
+            ..CreateMultipartUploadRequest::default()
+        })
+        .await?
+        .upload_id
+        .unwrap();
+
+    let parts = split::split(body, part_size);
+
+    let mut futures = vec![Either::Left(parts.into_future().map(Either::Left))];
+    let mut completed_parts = Vec::new();
+    while !futures.is_empty() {
+        let (output, _, remaining) = futures::future::select_all(futures.drain(..)).await;
+        futures = remaining;
+        match output {
+            Either::Left((Some(part), parts)) => {
+                let part = part?;
+                futures.push(Either::Left(parts.into_future().map(Either::Left)));
+                futures.push(Either::Right(
+                    client
+                        .upload_part(UploadPartRequest {
+                            body: Some(ByteStream::new(futures::stream::iter(
+                                part.body.into_iter().map(Ok),
+                            ))),
+                            bucket: bucket.clone(),
+                            content_length: Some(part.content_length as _),
+                            content_md5: Some(base64::encode(part.content_md5)),
+                            key: key.clone(),
+                            part_number: part.part_number as _,
+                            upload_id: upload_id.clone(),
+                            ..UploadPartRequest::default()
+                        })
+                        .map({
+                            let part_number = part.part_number;
+                            move |output| Either::Right((output, part_number))
+                        }),
+                ));
+            }
+            Either::Left((None, _)) => (),
+            Either::Right((output, part_number)) => {
+                let output = output?;
+                completed_parts.push(CompletedPart {
+                    e_tag: output.e_tag,
+                    part_number: Some(part_number as _),
+                });
+            }
+        }
     }
 
-    Ok(multipart_upload.complete().await?)
-}
-
-struct MultipartUpload<'a, C> {
-    client: &'a C,
-    bucket: &'a str,
-    key: &'a str,
-    upload_id: String,
-    parts: Vec<CompletedPart>,
-}
-
-impl<'a, C> MultipartUpload<'a, C>
-where
-    C: S3,
-{
-    async fn create(
-        client: &'a C,
-        bucket: &'a str,
-        key: &'a str,
-    ) -> Result<MultipartUpload<'a, C>, RusotoError<CreateMultipartUploadError>> {
-        let upload_id = client
-            .create_multipart_upload(CreateMultipartUploadRequest {
-                bucket: bucket.to_owned(),
-                key: key.to_owned(),
-                ..CreateMultipartUploadRequest::default()
-            })
-            .await?
-            .upload_id
-            .unwrap();
-        Ok(Self {
-            client,
+    completed_parts.sort_by_key(|completed_part| completed_part.part_number);
+    Ok(client
+        .complete_multipart_upload(CompleteMultipartUploadRequest {
             bucket,
             key,
+            multipart_upload: Some(CompletedMultipartUpload {
+                parts: Some(completed_parts),
+            }),
             upload_id,
-            parts: Vec::new(),
+            ..CompleteMultipartUploadRequest::default()
         })
-    }
-
-    async fn upload(&mut self, part: Part) -> Result<(), RusotoError<UploadPartError>> {
-        let e_tag = self
-            .client
-            .upload_part(UploadPartRequest {
-                body: Some(ByteStream::new(futures::stream::iter(
-                    part.body.into_iter().map(Ok),
-                ))),
-                bucket: self.bucket.to_owned(),
-                content_length: Some(part.content_length as _),
-                content_md5: Some(base64::encode(part.content_md5)),
-                key: self.key.to_owned(),
-                part_number: part.part_number as _,
-                upload_id: self.upload_id.clone(),
-                ..UploadPartRequest::default()
-            })
-            .await?
-            .e_tag
-            .unwrap();
-        self.parts.push(CompletedPart {
-            e_tag: Some(e_tag),
-            part_number: Some(part.part_number as _),
-        });
-        Ok(())
-    }
-
-    async fn complete(
-        self,
-    ) -> Result<CompleteMultipartUploadOutput, RusotoError<CompleteMultipartUploadError>> {
-        self.client
-            .complete_multipart_upload(CompleteMultipartUploadRequest {
-                bucket: self.bucket.to_owned(),
-                key: self.key.to_owned(),
-                multipart_upload: Some(CompletedMultipartUpload {
-                    parts: Some(self.parts),
-                }),
-                upload_id: self.upload_id,
-                ..CompleteMultipartUploadRequest::default()
-            })
-            .await
-    }
+        .await?)
 }
 
 #[cfg(test)]
