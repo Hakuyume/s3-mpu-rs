@@ -45,7 +45,7 @@ jobs:
     - run: cargo build --verbose --target ${{ matrix.target }} --all-targets --no-default-features --features ${{ matrix.tls }}
     - run: |
         docker run --detach --env SERVICES=s3 --publish 4566:4566 localstack/localstack
-        curl --head --retry 8 --retry-all-errors ${ENDPOINT}/health
+        docker run --network host curlimages/curl --head --retry 8 --retry-all-errors ${ENDPOINT}/health
     - run: cargo test --verbose --target ${{ matrix.target }} --no-default-features --features ${{ matrix.tls }}
   lint:
     runs-on: ubuntu-latest
