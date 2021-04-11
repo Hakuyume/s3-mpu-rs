@@ -51,7 +51,7 @@ where
                     Poll::Ready(Some(Ok(chunk))) => inner.push(chunk),
                     Poll::Ready(Some(Err(e))) => break Poll::Ready(Some(Err(e))),
                     Poll::Ready(None) => {
-                        break Poll::Ready(Some(Ok(this.inner.take().unwrap().finish())))
+                        break Poll::Ready(this.inner.take().unwrap().finish().map(Ok))
                     }
                     Poll::Pending => break Poll::Pending,
                 }
@@ -116,14 +116,18 @@ impl Inner {
         }
     }
 
-    fn finish(mut self) -> Part {
+    fn finish(mut self) -> Option<Part> {
         let chunk = self.remaining.split_off(0);
         self.push_part(chunk);
-        Part {
-            body: self.part_body,
-            content_length: self.part_content_length,
-            content_md5: self.part_content_md5.finalize(),
-            part_number: self.part_number + 1,
+        if self.part_body.is_empty() {
+            None
+        } else {
+            Some(Part {
+                body: self.part_body,
+                content_length: self.part_content_length,
+                content_md5: self.part_content_md5.finalize(),
+                part_number: self.part_number + 1,
+            })
         }
     }
 }
