@@ -16,6 +16,7 @@ base64 = "0.13"
 bytes = "1"
 futures = "0.3"
 md-5 = "0.9"
+pin-project = "1"
 rusoto_core = { version = "0.46", default-features = false }
 rusoto_s3 = { version = "0.46", default-features = false }
 

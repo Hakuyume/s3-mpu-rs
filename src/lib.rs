@@ -1,15 +1,15 @@
+mod split;
+
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
-use md5::digest::generic_array::GenericArray;
-use md5::{Digest, Md5};
+use md5::digest::Output;
+use md5::Md5;
 use rusoto_core::{ByteStream, RusotoError};
 use rusoto_s3::{
     CompleteMultipartUploadError, CompleteMultipartUploadOutput, CompleteMultipartUploadRequest,
     CompletedMultipartUpload, CompletedPart, CreateMultipartUploadError,
     CreateMultipartUploadRequest, UploadPartError, UploadPartRequest, S3,
 };
-use std::cmp;
-use std::mem;
 use std::ops::RangeInclusive;
 
 // https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html
@@ -38,38 +38,16 @@ where
         + From<RusotoError<UploadPartError>>
         + From<RusotoError<CompleteMultipartUploadError>>,
 {
-    let body = input.body;
-    futures::pin_mut!(body);
-
     let mut multipart_upload = MultipartUpload::create(client, &input.bucket, &input.key).await?;
 
-    let mut chunks = Vec::new();
-    let mut size = 0;
-    let mut md5 = Md5::new();
-    while let Some(chunk) = body.next().await {
-        let mut chunk = chunk?;
-        while size + chunk.len() >= *part_size.start() {
-            let chunk = chunk.split_to(cmp::min(chunk.len(), *part_size.end() - size));
-            size += chunk.len();
-            md5.update(&chunk);
-            chunks.push(chunk);
-            multipart_upload
-                .upload(
-                    mem::replace(&mut chunks, Vec::new()),
-                    mem::replace(&mut size, 0),
-                    md5.finalize_reset(),
-                )
-                .await?;
-        }
-        if !chunk.is_empty() {
-            size += chunk.len();
-            md5.update(&chunk);
-            chunks.push(chunk);
-        }
+    let parts = split::split(input.body, part_size);
+    futures::pin_mut!(parts);
+    while let Some(part) = parts.next().await {
+        let part = part?;
+        multipart_upload
+            .upload(part.body, part.content_length, part.content_md5)
+            .await?;
     }
-    multipart_upload
-        .upload(chunks, size, md5.finalize())
-        .await?;
 
     Ok(multipart_upload.complete().await?)
 }
@@ -115,7 +93,7 @@ where
         &mut self,
         body: Vec<Bytes>,
         content_length: usize,
-        content_md5: GenericArray<u8, <Md5 as Digest>::OutputSize>,
+        content_md5: Output<Md5>,
     ) -> Result<(), RusotoError<UploadPartError>> {
         let e_tag = self
             .client
