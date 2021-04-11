@@ -1,5 +1,7 @@
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
+use md5::digest::generic_array::GenericArray;
+use md5::{Digest, Md5};
 use rusoto_core::{ByteStream, RusotoError};
 use rusoto_s3::{
     CompleteMultipartUploadError, CompleteMultipartUploadOutput, CompleteMultipartUploadRequest,
@@ -43,26 +45,31 @@ where
 
     let mut chunks = Vec::new();
     let mut size = 0;
+    let mut md5 = Md5::new();
     while let Some(chunk) = body.next().await {
         let mut chunk = chunk?;
         while size + chunk.len() >= *part_size.start() {
-            let len = cmp::min(chunk.len(), *part_size.end() - size);
-            chunks.push(chunk.split_to(len));
-            size += len;
+            let chunk = chunk.split_to(cmp::min(chunk.len(), *part_size.end() - size));
+            size += chunk.len();
+            md5.update(&chunk);
+            chunks.push(chunk);
             multipart_upload
                 .upload(
                     mem::replace(&mut chunks, Vec::new()),
-                    mem::replace(&mut size, 0) as _,
+                    mem::replace(&mut size, 0),
+                    md5.finalize_reset(),
                 )
                 .await?;
         }
         if !chunk.is_empty() {
-            let len = chunk.len();
+            size += chunk.len();
+            md5.update(&chunk);
             chunks.push(chunk);
-            size += len;
         }
     }
-    multipart_upload.upload(chunks, size as _).await?;
+    multipart_upload
+        .upload(chunks, size, md5.finalize())
+        .await?;
 
     Ok(multipart_upload.complete().await?)
 }
@@ -107,7 +114,8 @@ where
     async fn upload(
         &mut self,
         body: Vec<Bytes>,
-        content_length: i64,
+        content_length: usize,
+        content_md5: GenericArray<u8, <Md5 as Digest>::OutputSize>,
     ) -> Result<(), RusotoError<UploadPartError>> {
         let e_tag = self
             .client
@@ -116,7 +124,8 @@ where
                     body.into_iter().map(Ok),
                 ))),
                 bucket: self.bucket.to_owned(),
-                content_length: Some(content_length),
+                content_length: Some(content_length as _),
+                content_md5: Some(base64::encode(content_md5)),
                 key: self.key.to_owned(),
                 part_number: self.part_number,
                 upload_id: self.upload_id.clone(),

@@ -12,8 +12,10 @@ native-tls = ["rusoto_core/native-tls", "rusoto_s3/native-tls"]
 rustls = ["rusoto_core/rustls", "rusoto_s3/rustls"]
 
 [dependencies]
+base64 = "0.13"
 bytes = "1"
 futures = "0.3"
+md-5 = "0.9"
 rusoto_core = { version = "0.46", default-features = false }
 rusoto_s3 = { version = "0.46", default-features = false }
 
