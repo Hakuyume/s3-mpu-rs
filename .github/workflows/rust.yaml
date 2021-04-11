@@ -8,7 +8,7 @@ on:
 env:
   AWS_ACCESS_KEY_ID: test
   AWS_SECRET_ACCESS_KEY: test
-  BUCKET: rusoto-s3-mpu
+  BUCKET: s3-mpu
   CARGO_TERM_COLOR: always
   ENDPOINT: http://localhost:4566
 
