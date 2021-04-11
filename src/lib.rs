@@ -1,3 +1,5 @@
+mod split;
+
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use rusoto_core::{ByteStream, RusotoError};
@@ -6,8 +8,7 @@ use rusoto_s3::{
     CompletedMultipartUpload, CompletedPart, CreateMultipartUploadError,
     CreateMultipartUploadRequest, UploadPartError, UploadPartRequest, S3,
 };
-use std::cmp;
-use std::mem;
+use split::Part;
 use std::ops::RangeInclusive;
 
 // https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html
@@ -36,33 +37,14 @@ where
         + From<RusotoError<UploadPartError>>
         + From<RusotoError<CompleteMultipartUploadError>>,
 {
-    let body = input.body;
-    futures::pin_mut!(body);
-
     let mut multipart_upload = MultipartUpload::create(client, &input.bucket, &input.key).await?;
 
-    let mut chunks = Vec::new();
-    let mut size = 0;
-    while let Some(chunk) = body.next().await {
-        let mut chunk = chunk?;
-        while size + chunk.len() >= *part_size.start() {
-            let len = cmp::min(chunk.len(), *part_size.end() - size);
-            chunks.push(chunk.split_to(len));
-            size += len;
-            multipart_upload
-                .upload(
-                    mem::replace(&mut chunks, Vec::new()),
-                    mem::replace(&mut size, 0) as _,
-                )
-                .await?;
-        }
-        if !chunk.is_empty() {
-            let len = chunk.len();
-            chunks.push(chunk);
-            size += len;
-        }
+    let parts = split::split(input.body, part_size);
+    futures::pin_mut!(parts);
+    while let Some(part) = parts.next().await {
+        let part = part?;
+        multipart_upload.upload(part).await?;
     }
-    multipart_upload.upload(chunks, size as _).await?;
 
     Ok(multipart_upload.complete().await?)
 }
@@ -73,7 +55,6 @@ struct MultipartUpload<'a, C> {
     key: &'a str,
     upload_id: String,
     parts: Vec<CompletedPart>,
-    part_number: i64,
 }
 
 impl<'a, C> MultipartUpload<'a, C>
@@ -100,25 +81,21 @@ where
             key,
             upload_id,
             parts: Vec::new(),
-            part_number: 1,
         })
     }
 
-    async fn upload(
-        &mut self,
-        body: Vec<Bytes>,
-        content_length: i64,
-    ) -> Result<(), RusotoError<UploadPartError>> {
+    async fn upload(&mut self, part: Part) -> Result<(), RusotoError<UploadPartError>> {
         let e_tag = self
             .client
             .upload_part(UploadPartRequest {
                 body: Some(ByteStream::new(futures::stream::iter(
-                    body.into_iter().map(Ok),
+                    part.body.into_iter().map(Ok),
                 ))),
                 bucket: self.bucket.to_owned(),
-                content_length: Some(content_length),
+                content_length: Some(part.content_length as _),
+                content_md5: Some(base64::encode(part.content_md5)),
                 key: self.key.to_owned(),
-                part_number: self.part_number,
+                part_number: part.part_number as _,
                 upload_id: self.upload_id.clone(),
                 ..UploadPartRequest::default()
             })
@@ -127,9 +104,8 @@ where
             .unwrap();
         self.parts.push(CompletedPart {
             e_tag: Some(e_tag),
-            part_number: Some(self.part_number),
+            part_number: Some(part.part_number as _),
         });
-        self.part_number += 1;
         Ok(())
     }
 
