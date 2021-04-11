@@ -2,14 +2,13 @@ mod split;
 
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
-use md5::digest::Output;
-use md5::Md5;
 use rusoto_core::{ByteStream, RusotoError};
 use rusoto_s3::{
     CompleteMultipartUploadError, CompleteMultipartUploadOutput, CompleteMultipartUploadRequest,
     CompletedMultipartUpload, CompletedPart, CreateMultipartUploadError,
     CreateMultipartUploadRequest, UploadPartError, UploadPartRequest, S3,
 };
+use split::Part;
 use std::ops::RangeInclusive;
 
 // https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html
@@ -44,9 +43,7 @@ where
     futures::pin_mut!(parts);
     while let Some(part) = parts.next().await {
         let part = part?;
-        multipart_upload
-            .upload(part.body, part.content_length, part.content_md5)
-            .await?;
+        multipart_upload.upload(part).await?;
     }
 
     Ok(multipart_upload.complete().await?)
@@ -58,7 +55,6 @@ struct MultipartUpload<'a, C> {
     key: &'a str,
     upload_id: String,
     parts: Vec<CompletedPart>,
-    part_number: i64,
 }
 
 impl<'a, C> MultipartUpload<'a, C>
@@ -85,27 +81,21 @@ where
             key,
             upload_id,
             parts: Vec::new(),
-            part_number: 1,
         })
     }
 
-    async fn upload(
-        &mut self,
-        body: Vec<Bytes>,
-        content_length: usize,
-        content_md5: Output<Md5>,
-    ) -> Result<(), RusotoError<UploadPartError>> {
+    async fn upload(&mut self, part: Part) -> Result<(), RusotoError<UploadPartError>> {
         let e_tag = self
             .client
             .upload_part(UploadPartRequest {
                 body: Some(ByteStream::new(futures::stream::iter(
-                    body.into_iter().map(Ok),
+                    part.body.into_iter().map(Ok),
                 ))),
                 bucket: self.bucket.to_owned(),
-                content_length: Some(content_length as _),
-                content_md5: Some(base64::encode(content_md5)),
+                content_length: Some(part.content_length as _),
+                content_md5: Some(base64::encode(part.content_md5)),
                 key: self.key.to_owned(),
-                part_number: self.part_number,
+                part_number: part.part_number as _,
                 upload_id: self.upload_id.clone(),
                 ..UploadPartRequest::default()
             })
@@ -114,9 +104,8 @@ where
             .unwrap();
         self.parts.push(CompletedPart {
             e_tag: Some(e_tag),
-            part_number: Some(self.part_number),
+            part_number: Some(part.part_number as _),
         });
-        self.part_number += 1;
         Ok(())
     }
 
