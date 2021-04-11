@@ -48,38 +48,42 @@ where
         .upload_id
         .unwrap();
 
-    let parts = split::split(body, part_size)
-        .and_then(|part| {
-            client
-                .upload_part(UploadPartRequest {
-                    body: Some(ByteStream::new(futures::stream::iter(
-                        part.body.into_iter().map(Ok),
-                    ))),
-                    bucket: bucket.clone(),
-                    content_length: Some(part.content_length as _),
-                    content_md5: Some(base64::encode(part.content_md5)),
-                    key: key.clone(),
-                    part_number: part.part_number as _,
-                    upload_id: upload_id.clone(),
-                    ..UploadPartRequest::default()
-                })
-                .map_ok({
-                    let part_number = part.part_number;
-                    move |output| CompletedPart {
-                        e_tag: output.e_tag,
-                        part_number: Some(part_number as _),
-                    }
-                })
-                .err_into()
-        })
-        .try_collect()
-        .await?;
+    let upload_parts = split::split(body, part_size).map_ok(|part| {
+        client
+            .upload_part(UploadPartRequest {
+                body: Some(ByteStream::new(futures::stream::iter(
+                    part.body.into_iter().map(Ok),
+                ))),
+                bucket: bucket.clone(),
+                content_length: Some(part.content_length as _),
+                content_md5: Some(base64::encode(part.content_md5)),
+                key: key.clone(),
+                part_number: part.part_number as _,
+                upload_id: upload_id.clone(),
+                ..UploadPartRequest::default()
+            })
+            .map_ok({
+                let part_number = part.part_number;
+                move |output| CompletedPart {
+                    e_tag: output.e_tag,
+                    part_number: Some(part_number as _),
+                }
+            })
+    });
+
+    let mut completed_parts = Vec::new();
+    futures::pin_mut!(upload_parts);
+    while let Some(upload_part) = upload_parts.try_next().await? {
+        completed_parts.push(upload_part.await?);
+    }
 
     Ok(client
         .complete_multipart_upload(CompleteMultipartUploadRequest {
             bucket,
             key,
-            multipart_upload: Some(CompletedMultipartUpload { parts: Some(parts) }),
+            multipart_upload: Some(CompletedMultipartUpload {
+                parts: Some(completed_parts),
+            }),
             upload_id,
             ..CompleteMultipartUploadRequest::default()
         })
