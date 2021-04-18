@@ -3,7 +3,7 @@ use bytes::Bytes;
 use rand::seq::SliceRandom;
 use rand::Rng;
 use rusoto_core::Region;
-use rusoto_s3::{GetObjectRequest, S3Client, S3};
+use rusoto_s3::{GetObjectRequest, ListMultipartUploadsRequest, S3Client, S3};
 use std::env;
 use std::error::Error;
 use std::io;
@@ -134,4 +134,18 @@ async fn test_abort() {
         e.downcast::<io::Error>().unwrap().kind(),
         io::ErrorKind::BrokenPipe
     );
+
+    let output = client
+        .list_multipart_uploads(ListMultipartUploadsRequest {
+            bucket,
+            ..ListMultipartUploadsRequest::default()
+        })
+        .await
+        .unwrap();
+
+    if let Some(uploads) = &output.uploads {
+        assert!(!uploads
+            .iter()
+            .any(|upload| upload.key.as_ref() == Some(&key)));
+    }
 }
