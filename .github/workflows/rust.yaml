@@ -47,7 +47,7 @@ jobs:
         # https://github.com/localstack/localstack/issues/3865
         echo -e 'FROM localstack/localstack:0.12.9\nRUN pip install moto-ext==2.0.3.7' | docker build --tag localstack/localstack -
         docker run --detach --env SERVICES=s3 --name localstack --publish 4566:4566 localstack/localstack
-        docker run --network host curlimages/curl --head --retry 8 --retry-all-errors ${ENDPOINT}/health
+        docker exec localstack sh -c "while ! curl --head ${ENDPOINT}/health; do sleep 5; done"
         docker exec localstack awslocal s3 mb s3://${BUCKET}
     - run: cargo test --verbose --target ${{ matrix.target }} --no-default-features --features ${{ matrix.tls }}
   lint:
