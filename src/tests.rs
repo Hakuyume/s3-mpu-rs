@@ -3,11 +3,22 @@ use bytes::Bytes;
 use rand::seq::SliceRandom;
 use rand::Rng;
 use rusoto_core::Region;
-use rusoto_s3::{GetObjectRequest, S3Client, S3};
+use rusoto_s3::{GetObjectRequest, ListMultipartUploadsRequest, S3Client, S3};
 use std::env;
 use std::error::Error;
+use std::io;
 use tokio::io::AsyncReadExt;
 use uuid::Uuid;
+
+fn context() -> (S3Client, String, String) {
+    let client = S3Client::new(Region::Custom {
+        name: "custom".to_owned(),
+        endpoint: env::var("ENDPOINT").unwrap(),
+    });
+    let bucket = env::var("BUCKET").unwrap();
+    let key = Uuid::new_v4().to_string();
+    (client, bucket, key)
+}
 
 fn into_chunks<R>(mut data: Bytes, rng: &mut R) -> impl Iterator<Item = Bytes>
 where
@@ -25,15 +36,10 @@ where
 }
 
 async fn check(size: usize) {
-    let client = S3Client::new(Region::Custom {
-        name: "custom".to_owned(),
-        endpoint: env::var("ENDPOINT").unwrap(),
-    });
     let mut rng = rand::thread_rng();
 
-    let bucket = env::var("BUCKET").unwrap();
+    let (client, bucket, key) = context();
     let body = (0..size).map(|_| rng.gen()).collect::<Bytes>();
-    let key = Uuid::new_v4().to_string();
 
     let output = multipart_upload::<_, _, Box<dyn Error>>(
         &client,
@@ -95,4 +101,51 @@ async fn test_exact() {
 #[tokio::test]
 async fn test_large() {
     check(*PART_SIZE.start() * 5 / 2).await;
+}
+
+#[tokio::test]
+async fn test_abort() {
+    let mut rng = rand::thread_rng();
+
+    let (client, bucket, key) = context();
+    let body = vec![
+        Ok((0..*PART_SIZE.start() * 3 / 4)
+            .map(|_| rng.gen())
+            .collect::<Bytes>()),
+        Ok((0..*PART_SIZE.start() * 5 / 4)
+            .map(|_| rng.gen())
+            .collect::<Bytes>()),
+        Err(io::Error::new(io::ErrorKind::BrokenPipe, "error").into()),
+    ];
+
+    let e = multipart_upload::<_, _, Box<dyn Error>>(
+        &client,
+        MultipartUploadRequest {
+            body: futures::stream::iter(body),
+            bucket: bucket.clone(),
+            key: key.clone(),
+        },
+        PART_SIZE,
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(
+        e.downcast::<io::Error>().unwrap().kind(),
+        io::ErrorKind::BrokenPipe
+    );
+
+    let output = client
+        .list_multipart_uploads(ListMultipartUploadsRequest {
+            bucket,
+            ..ListMultipartUploadsRequest::default()
+        })
+        .await
+        .unwrap();
+
+    if let Some(uploads) = &output.uploads {
+        assert!(!uploads
+            .iter()
+            .any(|upload| upload.key.as_ref() == Some(&key)));
+    }
 }

@@ -5,9 +5,10 @@ use futures::future::Either;
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
 use rusoto_core::{ByteStream, RusotoError};
 use rusoto_s3::{
-    CompleteMultipartUploadError, CompleteMultipartUploadOutput, CompleteMultipartUploadRequest,
-    CompletedMultipartUpload, CompletedPart, CreateMultipartUploadError,
-    CreateMultipartUploadRequest, UploadPartError, UploadPartRequest, S3,
+    AbortMultipartUploadRequest, CompleteMultipartUploadError, CompleteMultipartUploadOutput,
+    CompleteMultipartUploadRequest, CompletedMultipartUpload, CompletedPart,
+    CreateMultipartUploadError, CreateMultipartUploadRequest, UploadPartError, UploadPartRequest,
+    S3,
 };
 use std::future::Future;
 use std::ops::RangeInclusive;
@@ -40,15 +41,14 @@ where
 {
     let MultipartUploadRequest { body, bucket, key } = input;
 
-    let upload_id = client
+    let output = client
         .create_multipart_upload(CreateMultipartUploadRequest {
             bucket: bucket.clone(),
             key: key.clone(),
             ..CreateMultipartUploadRequest::default()
         })
-        .await?
-        .upload_id
-        .unwrap();
+        .await?;
+    let upload_id = output.upload_id.as_ref().unwrap();
 
     let futures = split::split(body, part_size).map_ok(|part| {
         client
@@ -73,20 +73,36 @@ where
             })
             .err_into()
     });
-    let mut completed_parts = dispatch_concurrent(futures).await?;
-    completed_parts.sort_by_key(|completed_part| completed_part.part_number);
 
-    Ok(client
-        .complete_multipart_upload(CompleteMultipartUploadRequest {
-            bucket,
-            key,
-            multipart_upload: Some(CompletedMultipartUpload {
-                parts: Some(completed_parts),
-            }),
-            upload_id,
-            ..CompleteMultipartUploadRequest::default()
-        })
-        .await?)
+    (async {
+        let mut completed_parts = dispatch_concurrent(futures).await?;
+        completed_parts.sort_by_key(|completed_part| completed_part.part_number);
+
+        let output = client
+            .complete_multipart_upload(CompleteMultipartUploadRequest {
+                bucket: bucket.clone(),
+                key: key.clone(),
+                multipart_upload: Some(CompletedMultipartUpload {
+                    parts: Some(completed_parts),
+                }),
+                upload_id: upload_id.clone(),
+                ..CompleteMultipartUploadRequest::default()
+            })
+            .await?;
+
+        Ok(output)
+    })
+    .or_else(|e| {
+        client
+            .abort_multipart_upload(AbortMultipartUploadRequest {
+                bucket: bucket.clone(),
+                key: key.clone(),
+                upload_id: upload_id.clone(),
+                ..AbortMultipartUploadRequest::default()
+            })
+            .map(|_| Err(e))
+    })
+    .await
 }
 
 async fn dispatch_concurrent<S, F, T, E>(stream: S) -> Result<Vec<T>, E>
