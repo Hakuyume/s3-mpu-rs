@@ -113,6 +113,10 @@ where
 {
     futures::pin_mut!(stream);
 
+    if let Some(limit) = limit {
+        assert!(limit > 0);
+    }
+
     let mut stream = stream.fuse();
     let mut futures = Vec::new();
     let mut outputs = Vec::new();
