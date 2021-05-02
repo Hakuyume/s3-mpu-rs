@@ -105,6 +105,21 @@ async fn test_large() {
 }
 
 #[tokio::test]
+async fn test_sequential() {
+    check(*PART_SIZE.start() * 5, Some(1)).await;
+}
+
+#[tokio::test]
+async fn test_concurrent() {
+    check(*PART_SIZE.start() * 5, Some(2)).await;
+}
+
+#[tokio::test]
+async fn test_concurrent_unlimited() {
+    check(*PART_SIZE.start() * 5, None).await;
+}
+
+#[tokio::test]
 async fn test_abort() {
     let mut rng = rand::thread_rng();
 
