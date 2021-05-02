@@ -1,7 +1,6 @@
 mod split;
 
 use bytes::Bytes;
-use futures::future::Either;
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
 use rusoto_core::{ByteStream, RusotoError};
 use rusoto_s3::{
@@ -12,6 +11,7 @@ use rusoto_s3::{
 };
 use std::future::Future;
 use std::ops::RangeInclusive;
+use std::task::Poll;
 
 // https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html
 pub const PART_SIZE: RangeInclusive<usize> = 5 << 20..=5 << 30;
@@ -113,31 +113,37 @@ where
 {
     futures::pin_mut!(stream);
 
-    let mut state = (Some(stream.into_future()), Vec::new());
+    let mut stream = stream.fuse();
+    let mut futures = Vec::new();
     let mut outputs = Vec::new();
-    while state.0.is_some() || !state.1.is_empty() {
-        state = match state.0 {
-            Some(stream) if limit.map_or(true, |limit| limit > state.1.len()) => {
-                match futures::future::select(stream, futures::future::select_all(state.1)).await {
-                    Either::Left(((Some(future), stream), futures)) => {
-                        let mut futures = futures.into_inner();
-                        futures.push(future?);
-                        (Some(stream.into_future()), futures)
-                    }
-                    Either::Left(((None, _), futures)) => (None, futures.into_inner()),
-                    Either::Right(((output, _, futures), stream)) => {
-                        outputs.push(output?);
-                        (Some(stream), futures)
-                    }
+
+    futures::future::poll_fn(|cx| {
+        if limit.map_or(true, |limit| limit > futures.len()) {
+            match stream.poll_next_unpin(cx) {
+                Poll::Ready(Some(Ok(future))) => futures.push(future),
+                Poll::Ready(Some(Err(e))) => return Poll::Ready(Err(e)),
+                _ => (),
+            }
+        }
+        let mut i = 0;
+        while i < futures.len() {
+            match futures[i].poll_unpin(cx) {
+                Poll::Ready(Ok(output)) => {
+                    futures.swap_remove(i);
+                    outputs.push(output);
                 }
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                Poll::Pending => i += 1,
             }
-            _ => {
-                let (output, _, futures) = futures::future::select_all(state.1).await;
-                outputs.push(output?);
-                (state.0, futures)
-            }
-        };
-    }
+        }
+        if stream.is_done() && futures.is_empty() {
+            Poll::Ready(Ok(()))
+        } else {
+            Poll::Pending
+        }
+    })
+    .await?;
+
     Ok(outputs)
 }
 
