@@ -122,29 +122,38 @@ where
     let mut outputs = Vec::new();
 
     futures::future::poll_fn(|cx| {
-        if limit.map_or(true, |limit| limit > futures.len()) {
-            match stream.poll_next_unpin(cx) {
-                Poll::Ready(Some(Ok(future))) => futures.push(future),
-                Poll::Ready(Some(Err(e))) => return Poll::Ready(Err(e)),
-                _ => (),
-            }
-        }
-        let mut i = 0;
-        while i < futures.len() {
-            match futures[i].poll_unpin(cx) {
-                Poll::Ready(Ok(output)) => {
-                    futures.swap_remove(i);
-                    outputs.push(output);
+        while !stream.is_done() || !futures.is_empty() {
+            let mut is_pending = false;
+            while limit.map_or(true, |limit| limit > futures.len()) {
+                match stream.poll_next_unpin(cx) {
+                    Poll::Ready(Some(Ok(future))) => futures.push(future),
+                    Poll::Ready(Some(Err(e))) => return Poll::Ready(Err(e)),
+                    Poll::Ready(None) => break,
+                    Poll::Pending => {
+                        is_pending = true;
+                        break;
+                    }
                 }
-                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                Poll::Pending => i += 1,
+            }
+            let mut i = 0;
+            while i < futures.len() {
+                match futures[i].poll_unpin(cx) {
+                    Poll::Ready(Ok(output)) => {
+                        futures.swap_remove(i);
+                        outputs.push(output);
+                    }
+                    Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                    Poll::Pending => {
+                        is_pending = true;
+                        i += 1;
+                    }
+                }
+            }
+            if is_pending {
+                return Poll::Pending;
             }
         }
-        if stream.is_done() && futures.is_empty() {
-            Poll::Ready(Ok(()))
-        } else {
-            Poll::Pending
-        }
+        Poll::Ready(Ok(()))
     })
     .await?;
 
