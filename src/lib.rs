@@ -1,7 +1,6 @@
 mod split;
 
 use bytes::Bytes;
-use futures::future::Either;
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
 use rusoto_core::{ByteStream, RusotoError};
 use rusoto_s3::{
@@ -12,6 +11,7 @@ use rusoto_s3::{
 };
 use std::future::Future;
 use std::ops::RangeInclusive;
+use std::task::Poll;
 
 // https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html
 pub const PART_SIZE: RangeInclusive<usize> = 5 << 20..=5 << 30;
@@ -31,6 +31,7 @@ pub async fn multipart_upload<C, B, E>(
     client: &C,
     input: MultipartUploadRequest<B, E>,
     part_size: RangeInclusive<usize>,
+    concurrency_limit: Option<usize>,
 ) -> Result<MultipartUploadOutput, E>
 where
     C: S3,
@@ -75,7 +76,7 @@ where
     });
 
     (async {
-        let mut completed_parts = dispatch_concurrent(futures).await?;
+        let mut completed_parts = dispatch_concurrent(futures, concurrency_limit).await?;
         completed_parts.sort_by_key(|completed_part| completed_part.part_number);
 
         let output = client
@@ -105,27 +106,57 @@ where
     .await
 }
 
-async fn dispatch_concurrent<S, F, T, E>(stream: S) -> Result<Vec<T>, E>
+async fn dispatch_concurrent<S, F, T, E>(stream: S, limit: Option<usize>) -> Result<Vec<T>, E>
 where
     S: Stream<Item = Result<F, E>>,
     F: Future<Output = Result<T, E>> + Unpin,
 {
     futures::pin_mut!(stream);
 
-    let mut futures = vec![Either::Left(stream.into_future().map(Either::Left))];
-    let mut outputs = Vec::new();
-    while !futures.is_empty() {
-        let (output, _, remaining) = futures::future::select_all(futures.drain(..)).await;
-        futures = remaining;
-        match output {
-            Either::Left((Some(future), stream)) => {
-                futures.push(Either::Left(stream.into_future().map(Either::Left)));
-                futures.push(Either::Right(future?.map(Either::Right)));
-            }
-            Either::Left((None, _)) => (),
-            Either::Right(output) => outputs.push(output?),
-        }
+    if let Some(limit) = limit {
+        assert!(limit > 0);
     }
+
+    let mut stream = stream.fuse();
+    let mut futures = Vec::new();
+    let mut outputs = Vec::new();
+
+    futures::future::poll_fn(|cx| {
+        while !stream.is_done() || !futures.is_empty() {
+            let mut is_pending = false;
+            while limit.map_or(true, |limit| limit > futures.len()) {
+                match stream.poll_next_unpin(cx) {
+                    Poll::Ready(Some(Ok(future))) => futures.push(future),
+                    Poll::Ready(Some(Err(e))) => return Poll::Ready(Err(e)),
+                    Poll::Ready(None) => break,
+                    Poll::Pending => {
+                        is_pending = true;
+                        break;
+                    }
+                }
+            }
+            let mut i = 0;
+            while i < futures.len() {
+                match futures[i].poll_unpin(cx) {
+                    Poll::Ready(Ok(output)) => {
+                        futures.swap_remove(i);
+                        outputs.push(output);
+                    }
+                    Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                    Poll::Pending => {
+                        is_pending = true;
+                        i += 1;
+                    }
+                }
+            }
+            if is_pending {
+                return Poll::Pending;
+            }
+        }
+        Poll::Ready(Ok(()))
+    })
+    .await?;
+
     Ok(outputs)
 }
 

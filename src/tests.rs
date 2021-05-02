@@ -35,7 +35,7 @@ where
     sizes.into_iter().map(move |size| data.split_to(size))
 }
 
-async fn check(size: usize) {
+async fn check(size: usize, concurrency_limit: Option<usize>) {
     let mut rng = rand::thread_rng();
 
     let (client, bucket, key) = context();
@@ -49,6 +49,7 @@ async fn check(size: usize) {
             key: key.clone(),
         },
         PART_SIZE,
+        concurrency_limit,
     )
     .await
     .unwrap();
@@ -90,17 +91,32 @@ fn test_into_chunks() {
 
 #[tokio::test]
 async fn test_small() {
-    check(*PART_SIZE.start() / 2).await;
+    check(*PART_SIZE.start() / 2, None).await;
 }
 
 #[tokio::test]
 async fn test_exact() {
-    check(*PART_SIZE.start() * 2).await;
+    check(*PART_SIZE.start() * 2, None).await;
 }
 
 #[tokio::test]
 async fn test_large() {
-    check(*PART_SIZE.start() * 5 / 2).await;
+    check(*PART_SIZE.start() * 5 / 2, None).await;
+}
+
+#[tokio::test]
+async fn test_sequential() {
+    check(*PART_SIZE.start() * 5, Some(1)).await;
+}
+
+#[tokio::test]
+async fn test_concurrent() {
+    check(*PART_SIZE.start() * 5, Some(2)).await;
+}
+
+#[tokio::test]
+async fn test_concurrent_unlimited() {
+    check(*PART_SIZE.start() * 5, None).await;
 }
 
 #[tokio::test]
@@ -126,6 +142,7 @@ async fn test_abort() {
             key: key.clone(),
         },
         PART_SIZE,
+        None,
     )
     .await
     .unwrap_err();
