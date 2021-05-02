@@ -31,7 +31,7 @@ pub async fn multipart_upload<C, B, E>(
     client: &C,
     input: MultipartUploadRequest<B, E>,
     part_size: RangeInclusive<usize>,
-    limit: Option<usize>,
+    concurrency_limit: Option<usize>,
 ) -> Result<MultipartUploadOutput, E>
 where
     C: S3,
@@ -76,7 +76,7 @@ where
     });
 
     (async {
-        let mut completed_parts = dispatch_concurrent(futures, limit).await?;
+        let mut completed_parts = dispatch_concurrent(futures, concurrency_limit).await?;
         completed_parts.sort_by_key(|completed_part| completed_part.part_number);
 
         let output = client
