@@ -142,7 +142,7 @@ async fn test_abort() {
             key: key.clone(),
         },
         PART_SIZE,
-        Some(8),
+        None,
     )
     .await
     .unwrap_err();
