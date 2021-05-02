@@ -49,6 +49,7 @@ async fn check(size: usize) {
             key: key.clone(),
         },
         PART_SIZE,
+        Some(8),
     )
     .await
     .unwrap();
@@ -126,6 +127,7 @@ async fn test_abort() {
             key: key.clone(),
         },
         PART_SIZE,
+        Some(8),
     )
     .await
     .unwrap_err();

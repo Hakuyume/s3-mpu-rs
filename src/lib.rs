@@ -31,6 +31,7 @@ pub async fn multipart_upload<C, B, E>(
     client: &C,
     input: MultipartUploadRequest<B, E>,
     part_size: RangeInclusive<usize>,
+    limit: Option<usize>,
 ) -> Result<MultipartUploadOutput, E>
 where
     C: S3,
@@ -75,7 +76,7 @@ where
     });
 
     (async {
-        let mut completed_parts = dispatch_concurrent(futures).await?;
+        let mut completed_parts = dispatch_concurrent(futures, limit).await?;
         completed_parts.sort_by_key(|completed_part| completed_part.part_number);
 
         let output = client
@@ -105,26 +106,37 @@ where
     .await
 }
 
-async fn dispatch_concurrent<S, F, T, E>(stream: S) -> Result<Vec<T>, E>
+async fn dispatch_concurrent<S, F, T, E>(stream: S, limit: Option<usize>) -> Result<Vec<T>, E>
 where
     S: Stream<Item = Result<F, E>>,
     F: Future<Output = Result<T, E>> + Unpin,
 {
     futures::pin_mut!(stream);
 
-    let mut futures = vec![Either::Left(stream.into_future().map(Either::Left))];
+    let mut state = (Some(stream.into_future()), Vec::new());
     let mut outputs = Vec::new();
-    while !futures.is_empty() {
-        let (output, _, remaining) = futures::future::select_all(futures.drain(..)).await;
-        futures = remaining;
-        match output {
-            Either::Left((Some(future), stream)) => {
-                futures.push(Either::Left(stream.into_future().map(Either::Left)));
-                futures.push(Either::Right(future?.map(Either::Right)));
+    while state.0.is_some() || !state.1.is_empty() {
+        state = match state.0 {
+            Some(stream) if limit.map_or(true, |limit| limit > state.1.len()) => {
+                match futures::future::select(stream, futures::future::select_all(state.1)).await {
+                    Either::Left(((Some(future), stream), futures)) => {
+                        let mut futures = futures.into_inner();
+                        futures.push(future?);
+                        (Some(stream.into_future()), futures)
+                    }
+                    Either::Left(((None, _), futures)) => (None, futures.into_inner()),
+                    Either::Right(((output, _, futures), stream)) => {
+                        outputs.push(output?);
+                        (Some(stream), futures)
+                    }
+                }
             }
-            Either::Left((None, _)) => (),
-            Either::Right(output) => outputs.push(output?),
-        }
+            _ => {
+                let (output, _, futures) = futures::future::select_all(state.1).await;
+                outputs.push(output?);
+                (state.0, futures)
+            }
+        };
     }
     Ok(outputs)
 }
