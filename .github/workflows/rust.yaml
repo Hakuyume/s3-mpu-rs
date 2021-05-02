@@ -44,9 +44,7 @@ jobs:
     - run: rustup target add ${{ matrix.target }}
     - run: cargo build --verbose --target ${{ matrix.target }} --all-targets --no-default-features --features ${{ matrix.tls }}
     - run: |
-        # https://github.com/localstack/localstack/issues/3865
-        echo -e 'FROM localstack/localstack:0.12.9\nRUN pip install moto-ext==2.0.3.7' | docker build --tag localstack/localstack -
-        docker run --detach --env SERVICES=s3 --name localstack --publish 4566:4566 localstack/localstack
+        docker run --detach --env SERVICES=s3 --name localstack --publish 4566:4566 localstack/localstack:0.12.10
         until curl --head ${ENDPOINT}/health; do sleep 5; done
         docker exec localstack awslocal s3 mb s3://${BUCKET}
     - run: cargo test --verbose --target ${{ matrix.target }} --no-default-features --features ${{ matrix.tls }}
