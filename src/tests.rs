@@ -4,6 +4,7 @@ use rand::seq::SliceRandom;
 use rand::Rng;
 use rusoto_core::Region;
 use rusoto_s3::{GetObjectRequest, ListMultipartUploadsRequest, S3Client, S3};
+use std::convert::TryInto;
 use std::env;
 use std::error::Error;
 use std::io;
@@ -49,7 +50,7 @@ async fn check(size: usize, concurrency_limit: Option<usize>) {
             key: key.clone(),
         },
         PART_SIZE,
-        concurrency_limit,
+        concurrency_limit.map(|limit| limit.try_into().unwrap()),
     )
     .await
     .unwrap();

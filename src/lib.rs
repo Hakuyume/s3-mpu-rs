@@ -1,7 +1,8 @@
+mod dispatch;
 mod split;
 
 use bytes::Bytes;
-use futures::{FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
+use futures::{FutureExt, Stream, TryFutureExt, TryStreamExt};
 use rusoto_core::{ByteStream, RusotoError};
 use rusoto_s3::{
     AbortMultipartUploadRequest, CompleteMultipartUploadError, CompleteMultipartUploadOutput,
@@ -9,17 +10,13 @@ use rusoto_s3::{
     CreateMultipartUploadError, CreateMultipartUploadRequest, UploadPartError, UploadPartRequest,
     S3,
 };
-use std::future::Future;
+use std::num::NonZeroUsize;
 use std::ops::RangeInclusive;
-use std::task::Poll;
 
 // https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html
 pub const PART_SIZE: RangeInclusive<usize> = 5 << 20..=5 << 30;
 
-pub struct MultipartUploadRequest<B, E>
-where
-    B: Stream<Item = Result<Bytes, E>>,
-{
+pub struct MultipartUploadRequest<B> {
     pub body: B,
     pub bucket: String,
     pub key: String,
@@ -29,9 +26,9 @@ pub type MultipartUploadOutput = CompleteMultipartUploadOutput;
 
 pub async fn multipart_upload<C, B, E>(
     client: &C,
-    input: MultipartUploadRequest<B, E>,
+    input: MultipartUploadRequest<B>,
     part_size: RangeInclusive<usize>,
-    concurrency_limit: Option<usize>,
+    concurrency_limit: Option<NonZeroUsize>,
 ) -> Result<MultipartUploadOutput, E>
 where
     C: S3,
@@ -51,7 +48,7 @@ where
         .await?;
     let upload_id = output.upload_id.as_ref().unwrap();
 
-    let futures = split::split(body, part_size).map_ok(|part| {
+    let stream = split::split(body, part_size).map_ok(|part| {
         client
             .upload_part(UploadPartRequest {
                 body: Some(ByteStream::new(futures::stream::iter(
@@ -76,7 +73,7 @@ where
     });
 
     (async {
-        let mut completed_parts = dispatch_concurrent(futures, concurrency_limit).await?;
+        let mut completed_parts = dispatch::dispatch_concurrent(stream, concurrency_limit).await?;
         completed_parts.sort_by_key(|completed_part| completed_part.part_number);
 
         let output = client
@@ -104,60 +101,6 @@ where
             .map(|_| Err(e))
     })
     .await
-}
-
-async fn dispatch_concurrent<S, F, T, E>(stream: S, limit: Option<usize>) -> Result<Vec<T>, E>
-where
-    S: Stream<Item = Result<F, E>>,
-    F: Future<Output = Result<T, E>> + Unpin,
-{
-    futures::pin_mut!(stream);
-
-    if let Some(limit) = limit {
-        assert!(limit > 0);
-    }
-
-    let mut stream = stream.fuse();
-    let mut futures = Vec::new();
-    let mut outputs = Vec::new();
-
-    futures::future::poll_fn(|cx| {
-        while !stream.is_done() || !futures.is_empty() {
-            let mut is_pending = false;
-            while limit.map_or(true, |limit| limit > futures.len()) {
-                match stream.poll_next_unpin(cx) {
-                    Poll::Ready(Some(Ok(future))) => futures.push(future),
-                    Poll::Ready(Some(Err(e))) => return Poll::Ready(Err(e)),
-                    Poll::Ready(None) => break,
-                    Poll::Pending => {
-                        is_pending = true;
-                        break;
-                    }
-                }
-            }
-            let mut i = 0;
-            while i < futures.len() {
-                match futures[i].poll_unpin(cx) {
-                    Poll::Ready(Ok(output)) => {
-                        futures.swap_remove(i);
-                        outputs.push(output);
-                    }
-                    Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                    Poll::Pending => {
-                        is_pending = true;
-                        i += 1;
-                    }
-                }
-            }
-            if is_pending {
-                return Poll::Pending;
-            }
-        }
-        Poll::Ready(Ok(()))
-    })
-    .await?;
-
-    Ok(outputs)
 }
 
 #[cfg(test)]
