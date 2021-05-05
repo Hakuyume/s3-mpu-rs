@@ -47,9 +47,8 @@ where
                 if let Some(part) = inner.pop() {
                     break Poll::Ready(Some(Ok(part)));
                 }
-                match this.body.as_mut().poll_next(cx) {
-                    Poll::Ready(Some(Ok(chunk))) => inner.push(chunk),
-                    Poll::Ready(Some(Err(e))) => break Poll::Ready(Some(Err(e))),
+                match this.body.as_mut().poll_next(cx)? {
+                    Poll::Ready(Some(chunk)) => inner.push(chunk),
                     Poll::Ready(None) => {
                         break Poll::Ready(this.inner.take().unwrap().finish().map(Ok))
                     }
