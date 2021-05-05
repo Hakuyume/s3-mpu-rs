@@ -91,6 +91,11 @@ fn test_into_chunks() {
 }
 
 #[tokio::test]
+async fn test_empty() {
+    check(0, None).await;
+}
+
+#[tokio::test]
 async fn test_small() {
     check(*PART_SIZE.start() / 2, None).await;
 }
