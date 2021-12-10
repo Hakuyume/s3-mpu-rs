@@ -23,12 +23,6 @@ jobs:
         dependency-versions:
         - minimal
         - maximum
-        tls:
-        - native-tls
-        - rustls
-        exclude:
-        - target: x86_64-unknown-linux-musl
-          tls: native-tls
     steps:
     - uses: actions/checkout@v2
     - if: matrix.target == 'x86_64-unknown-linux-musl'
@@ -42,12 +36,12 @@ jobs:
         cargo update --package percent-encoding --precise 2.1.0
         cargo update --package serde --precise 1.0.103
     - run: rustup target add ${{ matrix.target }}
-    - run: cargo build --verbose --target ${{ matrix.target }} --all-targets --no-default-features --features ${{ matrix.tls }}
+    - run: cargo build --verbose --target ${{ matrix.target }} --all-targets
     - run: |
         docker run --detach --env SERVICES=s3 --name localstack --publish 4566:4566 localstack/localstack:0.12.10
         until curl --head ${ENDPOINT}/health; do sleep 5; done
         docker exec localstack awslocal s3 mb s3://${BUCKET}
-    - run: cargo test --verbose --target ${{ matrix.target }} --no-default-features --features ${{ matrix.tls }}
+    - run: cargo test --verbose --target ${{ matrix.target }}
   lint:
     runs-on: ubuntu-latest
     steps:
