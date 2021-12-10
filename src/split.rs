@@ -105,8 +105,8 @@ impl Inner {
 
             self.part_number += 1;
             Some(Part {
-                body: mem::replace(&mut self.part_body, Vec::new()),
-                content_length: mem::replace(&mut self.part_content_length, 0),
+                body: mem::take(&mut self.part_body),
+                content_length: mem::take(&mut self.part_content_length),
                 content_md5: self.part_content_md5.finalize_reset(),
                 part_number: self.part_number,
             })
