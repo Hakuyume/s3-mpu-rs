@@ -161,7 +161,7 @@ async fn test_abort() {
         Err(io::Error::new(io::ErrorKind::BrokenPipe, "error").into()),
     ];
 
-    let e = MultipartUpload::new(&client)
+    MultipartUpload::new(&client)
         .body(ByteStream::new(SdkBody::from_dyn(BoxBody::new(B(
             body.into_iter()
         )))))
@@ -170,11 +170,6 @@ async fn test_abort() {
         .send::<Error>(PART_SIZE, None)
         .await
         .unwrap_err();
-
-    assert_eq!(
-        e.downcast::<io::Error>().unwrap().kind(),
-        io::ErrorKind::BrokenPipe
-    );
 
     let output = client
         .list_multipart_uploads()
