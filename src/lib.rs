@@ -136,8 +136,7 @@ impl<'a, C, M, R> MultipartUpload<'a, C, M, R> {
                 dispatch::dispatch_concurrent(stream, concurrency_limit).await?;
             completed_parts.sort_by_key(|completed_part| completed_part.part_number);
 
-            let output = self
-                .client
+            self.client
                 .complete_multipart_upload()
                 .set_bucket(self.bucket.clone())
                 .set_key(self.key.clone())
@@ -148,9 +147,8 @@ impl<'a, C, M, R> MultipartUpload<'a, C, M, R> {
                 )
                 .upload_id(upload_id)
                 .send()
-                .await?;
-
-            Ok(output)
+                .await
+                .map_err(E::from)
         })
         .or_else(|e| {
             self.client
