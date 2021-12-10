@@ -1,15 +1,25 @@
 mod dispatch;
+mod into_byte_stream;
 mod split;
 
+use aws_http::AwsErrorRetryPolicy;
+use aws_sdk_s3::error::{
+    AbortMultipartUploadError, CompleteMultipartUploadError, CreateMultipartUploadError,
+    UploadPartError,
+};
+use aws_sdk_s3::model::{CompletedMultipartUpload, CompletedPart};
+use aws_sdk_s3::operation::{
+    AbortMultipartUpload, CompleteMultipartUpload, CreateMultipartUpload, UploadPart,
+};
+use aws_sdk_s3::output::{
+    AbortMultipartUploadOutput, CompleteMultipartUploadOutput, CreateMultipartUploadOutput,
+    UploadPartOutput,
+};
+use aws_sdk_s3::{Client, SdkError};
+use aws_smithy_client::bounds::{SmithyConnector, SmithyMiddleware, SmithyRetryPolicy};
+use aws_smithy_client::retry::NewRequestPolicy;
 use bytes::Bytes;
 use futures::{FutureExt, Stream, TryFutureExt, TryStreamExt};
-use rusoto_core::{ByteStream, RusotoError};
-use rusoto_s3::{
-    AbortMultipartUploadRequest, CompleteMultipartUploadError, CompleteMultipartUploadOutput,
-    CompleteMultipartUploadRequest, CompletedMultipartUpload, CompletedPart,
-    CreateMultipartUploadError, CreateMultipartUploadRequest, UploadPartError, UploadPartRequest,
-    S3,
-};
 use std::num::NonZeroUsize;
 use std::ops::RangeInclusive;
 
@@ -24,52 +34,71 @@ pub struct MultipartUploadRequest<B> {
 
 pub type MultipartUploadOutput = CompleteMultipartUploadOutput;
 
-pub async fn multipart_upload<C, B, E>(
-    client: &C,
+pub async fn multipart_upload<C, M, R, B, E>(
+    client: &Client<C, M, R>,
     input: MultipartUploadRequest<B>,
     part_size: RangeInclusive<usize>,
     concurrency_limit: Option<NonZeroUsize>,
 ) -> Result<MultipartUploadOutput, E>
 where
-    C: S3,
+    C: SmithyConnector,
+    M: SmithyMiddleware<C>,
+    R: NewRequestPolicy,
+    R::Policy: SmithyRetryPolicy<
+            CreateMultipartUpload,
+            CreateMultipartUploadOutput,
+            CreateMultipartUploadError,
+            AwsErrorRetryPolicy,
+        > + SmithyRetryPolicy<UploadPart, UploadPartOutput, UploadPartError, AwsErrorRetryPolicy>
+        + SmithyRetryPolicy<
+            CompleteMultipartUpload,
+            CompleteMultipartUploadOutput,
+            CompleteMultipartUploadError,
+            AwsErrorRetryPolicy,
+        > + SmithyRetryPolicy<
+            AbortMultipartUpload,
+            AbortMultipartUploadOutput,
+            AbortMultipartUploadError,
+            AwsErrorRetryPolicy,
+        >,
     B: Stream<Item = Result<Bytes, E>>,
-    E: From<RusotoError<CreateMultipartUploadError>>
-        + From<RusotoError<UploadPartError>>
-        + From<RusotoError<CompleteMultipartUploadError>>,
+    E: From<SdkError<CreateMultipartUploadError>>
+        + From<SdkError<UploadPartError>>
+        + From<SdkError<CompleteMultipartUploadError>>,
 {
     let MultipartUploadRequest { body, bucket, key } = input;
 
     let output = client
-        .create_multipart_upload(CreateMultipartUploadRequest {
-            bucket: bucket.clone(),
-            key: key.clone(),
-            ..CreateMultipartUploadRequest::default()
-        })
+        .create_multipart_upload()
+        .bucket(&bucket)
+        .key(&key)
+        .send()
         .await?;
     let upload_id = output.upload_id.as_ref().unwrap();
 
     let stream = split::split(body, part_size).map_ok(|part| {
-        client
-            .upload_part(UploadPartRequest {
-                body: Some(ByteStream::new(futures::stream::iter(
-                    part.body.into_iter().map(Ok),
-                ))),
-                bucket: bucket.clone(),
-                content_length: Some(part.content_length as _),
-                content_md5: Some(base64::encode(part.content_md5)),
-                key: key.clone(),
-                part_number: part.part_number as _,
-                upload_id: upload_id.clone(),
-                ..UploadPartRequest::default()
-            })
-            .map_ok({
-                let part_number = part.part_number;
-                move |output| CompletedPart {
-                    e_tag: output.e_tag,
-                    part_number: Some(part_number as _),
-                }
-            })
-            .err_into()
+        Box::pin(
+            client
+                .upload_part()
+                .body(into_byte_stream::into_byte_stream(part.body))
+                .bucket(&bucket)
+                .content_length(part.content_length as _)
+                .content_md5(base64::encode(part.content_md5))
+                .key(&key)
+                .part_number(part.part_number as _)
+                .upload_id(upload_id)
+                .send()
+                .map_ok({
+                    let part_number = part.part_number;
+                    move |output| {
+                        CompletedPart::builder()
+                            .e_tag(output.e_tag.unwrap())
+                            .part_number(part_number as _)
+                            .build()
+                    }
+                })
+                .err_into(),
+        )
     });
 
     (async {
@@ -77,27 +106,27 @@ where
         completed_parts.sort_by_key(|completed_part| completed_part.part_number);
 
         let output = client
-            .complete_multipart_upload(CompleteMultipartUploadRequest {
-                bucket: bucket.clone(),
-                key: key.clone(),
-                multipart_upload: Some(CompletedMultipartUpload {
-                    parts: Some(completed_parts),
-                }),
-                upload_id: upload_id.clone(),
-                ..CompleteMultipartUploadRequest::default()
-            })
+            .complete_multipart_upload()
+            .bucket(&bucket)
+            .key(&key)
+            .multipart_upload(
+                CompletedMultipartUpload::builder()
+                    .set_parts(Some(completed_parts))
+                    .build(),
+            )
+            .upload_id(upload_id)
+            .send()
             .await?;
 
         Ok(output)
     })
     .or_else(|e| {
         client
-            .abort_multipart_upload(AbortMultipartUploadRequest {
-                bucket: bucket.clone(),
-                key: key.clone(),
-                upload_id: upload_id.clone(),
-                ..AbortMultipartUploadRequest::default()
-            })
+            .abort_multipart_upload()
+            .bucket(&bucket)
+            .key(&key)
+            .upload_id(upload_id)
+            .send()
             .map(|_| Err(e))
     })
     .await

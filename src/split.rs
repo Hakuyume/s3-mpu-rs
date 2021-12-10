@@ -142,16 +142,16 @@ mod tests {
     async fn test_split() {
         let mut parts = split::<_, ()>(
             futures::stream::iter(
-                vec![
-                    &[0, 1, 2][..],
-                    &[3, 4],
-                    &[
+                [
+                    Bytes::from_static(&[0, 1, 2]),
+                    Bytes::from_static(&[3, 4]),
+                    Bytes::from_static(&[
                         5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
-                    ],
-                    &[22, 23],
+                    ]),
+                    Bytes::from_static(&[22, 23]),
                 ]
                 .into_iter()
-                .map(|chunk| Ok(Bytes::from_static(chunk))),
+                .map(Ok),
             ),
             4..=8,
         );

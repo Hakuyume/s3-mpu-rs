@@ -1,21 +1,25 @@
 use super::{multipart_upload, MultipartUploadRequest, PART_SIZE};
+use aws_config::default_provider::credentials;
+use aws_sdk_s3::{Client, Config, Endpoint, Region};
 use bytes::Bytes;
 use rand::seq::SliceRandom;
 use rand::Rng;
-use rusoto_core::Region;
-use rusoto_s3::{GetObjectRequest, ListMultipartUploadsRequest, S3Client, S3};
 use std::convert::TryInto;
 use std::env;
 use std::error::Error;
 use std::io;
-use tokio::io::AsyncReadExt;
 use uuid::Uuid;
 
-fn context() -> (S3Client, String, String) {
-    let client = S3Client::new(Region::Custom {
-        name: "custom".to_owned(),
-        endpoint: env::var("ENDPOINT").unwrap(),
-    });
+async fn context() -> (Client, String, String) {
+    let client = Client::from_conf(
+        Config::builder()
+            .credentials_provider(credentials::default_provider().await)
+            .endpoint_resolver(Endpoint::immutable(
+                env::var("ENDPOINT").unwrap().parse().unwrap(),
+            ))
+            .region(Region::from_static("custom"))
+            .build(),
+    );
     let bucket = env::var("BUCKET").unwrap();
     let key = Uuid::new_v4().to_string();
     (client, bucket, key)
@@ -39,10 +43,10 @@ where
 async fn check(size: usize, concurrency_limit: Option<usize>) {
     let mut rng = rand::thread_rng();
 
-    let (client, bucket, key) = context();
+    let (client, bucket, key) = context().await;
     let body = (0..size).map(|_| rng.gen()).collect::<Bytes>();
 
-    let output = multipart_upload::<_, _, Box<dyn Error>>(
+    let output = multipart_upload::<_, _, _, _, Box<dyn Error>>(
         &client,
         MultipartUploadRequest {
             body: futures::stream::iter(into_chunks(body.clone(), &mut rng).map(Ok)),
@@ -54,28 +58,17 @@ async fn check(size: usize, concurrency_limit: Option<usize>) {
     )
     .await
     .unwrap();
-
     assert_eq!(output.bucket.as_ref().unwrap(), &bucket);
     assert_eq!(output.key.as_ref().unwrap(), &key);
 
     let output = client
-        .get_object(GetObjectRequest {
-            bucket,
-            key,
-            ..GetObjectRequest::default()
-        })
+        .get_object()
+        .bucket(&bucket)
+        .key(&key)
+        .send()
         .await
         .unwrap();
-
-    let mut buf = Vec::new();
-    output
-        .body
-        .unwrap()
-        .into_async_read()
-        .read_to_end(&mut buf)
-        .await
-        .unwrap();
-    assert_eq!(buf, body);
+    assert_eq!(output.body.collect().await.unwrap().into_bytes(), body);
 }
 
 #[test]
@@ -129,8 +122,8 @@ async fn test_concurrent_unlimited() {
 async fn test_abort() {
     let mut rng = rand::thread_rng();
 
-    let (client, bucket, key) = context();
-    let body = vec![
+    let (client, bucket, key) = context().await;
+    let body = [
         Ok((0..*PART_SIZE.start() * 3 / 4)
             .map(|_| rng.gen())
             .collect::<Bytes>()),
@@ -140,7 +133,7 @@ async fn test_abort() {
         Err(io::Error::new(io::ErrorKind::BrokenPipe, "error").into()),
     ];
 
-    let e = multipart_upload::<_, _, Box<dyn Error>>(
+    let e = multipart_upload::<_, _, _, _, Box<dyn Error>>(
         &client,
         MultipartUploadRequest {
             body: futures::stream::iter(body),
@@ -159,10 +152,9 @@ async fn test_abort() {
     );
 
     let output = client
-        .list_multipart_uploads(ListMultipartUploadsRequest {
-            bucket,
-            ..ListMultipartUploadsRequest::default()
-        })
+        .list_multipart_uploads()
+        .bucket(&bucket)
+        .send()
         .await
         .unwrap();
 
