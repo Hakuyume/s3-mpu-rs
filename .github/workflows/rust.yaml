@@ -20,21 +20,10 @@ jobs:
         target:
         - x86_64-unknown-linux-gnu
         - x86_64-unknown-linux-musl
-        dependency-versions:
-        - minimal
-        - maximum
     steps:
     - uses: actions/checkout@v2
     - if: matrix.target == 'x86_64-unknown-linux-musl'
       run: sudo apt-get install --no-install-recommends --yes musl-tools
-    - if: matrix.dependency-versions == 'minimal'
-      run: |
-        rustup toolchain add nightly
-        cargo +nightly update -Z minimal-versions
-        # https://github.com/rusoto/rusoto/pull/1925
-        cargo update --package async-trait --precise 0.1.9
-        cargo update --package percent-encoding --precise 2.1.0
-        cargo update --package serde --precise 1.0.103
     - run: rustup target add ${{ matrix.target }}
     - run: cargo build --verbose --target ${{ matrix.target }} --all-targets
     - run: |
