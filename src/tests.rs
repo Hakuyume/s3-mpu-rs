@@ -1,12 +1,20 @@
-use super::{multipart_upload, MultipartUploadRequest, PART_SIZE};
+use super::{MultipartUpload, PART_SIZE};
+use crate::into_byte_stream;
 use aws_config::default_provider::credentials;
+use aws_sdk_s3::ByteStream;
 use aws_sdk_s3::{Client, Config, Endpoint, Region};
+use aws_smithy_http::body::{Error, SdkBody};
 use bytes::Bytes;
+use http::header::HeaderMap;
+use http_body::combinators::BoxBody;
+use http_body::Body;
 use rand::seq::SliceRandom;
 use rand::Rng;
+use std::array;
 use std::env;
-use std::error::Error;
 use std::io;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use uuid::Uuid;
 
 async fn context() -> (Client, String, String) {
@@ -45,18 +53,18 @@ async fn check(size: usize, concurrency_limit: Option<usize>) {
     let (client, bucket, key) = context().await;
     let body = (0..size).map(|_| rng.gen()).collect::<Bytes>();
 
-    let output = multipart_upload::<_, _, _, _, Box<dyn Error>>(
-        &client,
-        MultipartUploadRequest {
-            body: futures::stream::iter(into_chunks(body.clone(), &mut rng).map(Ok)),
-            bucket: bucket.clone(),
-            key: key.clone(),
-        },
-        PART_SIZE,
-        concurrency_limit.map(|limit| limit.try_into().unwrap()),
-    )
-    .await
-    .unwrap();
+    let output = MultipartUpload::new(&client)
+        .body(into_byte_stream::into_byte_stream(
+            into_chunks(body.clone(), &mut rng).collect(),
+        ))
+        .bucket(&bucket)
+        .key(&key)
+        .send::<Error>(
+            PART_SIZE,
+            concurrency_limit.map(|limit| limit.try_into().unwrap()),
+        )
+        .await
+        .unwrap();
     assert_eq!(output.bucket.as_ref().unwrap(), &bucket);
     assert_eq!(output.key.as_ref().unwrap(), &key);
 
@@ -119,6 +127,27 @@ async fn test_concurrent_unlimited() {
 
 #[tokio::test]
 async fn test_abort() {
+    struct B<const N: usize>(array::IntoIter<Result<Bytes, Error>, N>);
+
+    impl<const N: usize> Body for B<N> {
+        type Data = Bytes;
+        type Error = Error;
+
+        fn poll_data(
+            self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+        ) -> Poll<Option<Result<Self::Data, Self::Error>>> {
+            Poll::Ready(self.get_mut().0.next())
+        }
+
+        fn poll_trailers(
+            self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+        ) -> Poll<Result<Option<HeaderMap>, Self::Error>> {
+            Poll::Ready(Ok(None))
+        }
+    }
+
     let mut rng = rand::thread_rng();
 
     let (client, bucket, key) = context().await;
@@ -132,18 +161,15 @@ async fn test_abort() {
         Err(io::Error::new(io::ErrorKind::BrokenPipe, "error").into()),
     ];
 
-    let e = multipart_upload::<_, _, _, _, Box<dyn Error>>(
-        &client,
-        MultipartUploadRequest {
-            body: futures::stream::iter(body),
-            bucket: bucket.clone(),
-            key: key.clone(),
-        },
-        PART_SIZE,
-        None,
-    )
-    .await
-    .unwrap_err();
+    let e = MultipartUpload::new(&client)
+        .body(ByteStream::new(SdkBody::from_dyn(BoxBody::new(B(
+            body.into_iter()
+        )))))
+        .bucket(&bucket)
+        .key(&key)
+        .send::<Error>(PART_SIZE, None)
+        .await
+        .unwrap_err();
 
     assert_eq!(
         e.downcast::<io::Error>().unwrap().kind(),

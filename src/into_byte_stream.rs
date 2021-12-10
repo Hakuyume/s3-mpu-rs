@@ -1,10 +1,9 @@
 use aws_sdk_s3::ByteStream;
-use aws_smithy_http::body::SdkBody;
+use aws_smithy_http::body::{Error, SdkBody};
 use bytes::Bytes;
 use http::header::HeaderMap;
 use http_body::combinators::BoxBody;
 use http_body::Body;
-use std::error::Error;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -14,7 +13,7 @@ pub fn into_byte_stream(body: Vec<Bytes>) -> ByteStream {
 
     impl Body for B {
         type Data = Bytes;
-        type Error = Box<dyn 'static + Error + Send + Sync>;
+        type Error = Error;
 
         fn poll_data(
             self: Pin<&mut Self>,
