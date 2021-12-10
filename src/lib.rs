@@ -89,11 +89,10 @@ where
                 .upload_id(upload_id)
                 .send()
                 .map_ok({
-                    let part_number = part.part_number;
                     move |output| {
                         CompletedPart::builder()
                             .e_tag(output.e_tag.unwrap())
-                            .part_number(part_number as _)
+                            .part_number(part.part_number as _)
                             .build()
                     }
                 })
