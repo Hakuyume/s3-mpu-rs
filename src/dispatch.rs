@@ -56,7 +56,6 @@ mod tests {
     use super::dispatch_concurrent;
     use std::cell::{Cell, RefCell};
     use std::collections::VecDeque;
-    use std::convert::TryInto;
     use std::future::Future;
     use std::rc::Rc;
     use std::task::{Context, Poll};

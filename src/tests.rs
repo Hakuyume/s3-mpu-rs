@@ -4,7 +4,6 @@ use aws_sdk_s3::{Client, Config, Endpoint, Region};
 use bytes::Bytes;
 use rand::seq::SliceRandom;
 use rand::Rng;
-use std::convert::TryInto;
 use std::env;
 use std::error::Error;
 use std::io;
