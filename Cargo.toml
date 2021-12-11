@@ -26,6 +26,7 @@ md-5 = "0.9"
 pin-project = "1"
 
 [dev-dependencies]
+anyhow = "1"
 aws-config = "0.2"
 rand = "0.8"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

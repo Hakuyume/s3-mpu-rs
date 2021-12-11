@@ -147,8 +147,8 @@ impl<C, M, R> MultipartUpload<C, M, R> {
                 )
                 .set_upload_id(upload_id.clone())
                 .send()
+                .err_into()
                 .await
-                .map_err(E::from)
         })
         .or_else(|e| {
             self.client

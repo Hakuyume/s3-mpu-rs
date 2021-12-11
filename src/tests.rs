@@ -3,7 +3,7 @@ use crate::into_byte_stream;
 use aws_config::default_provider::credentials;
 use aws_sdk_s3::ByteStream;
 use aws_sdk_s3::{Client, Config, Endpoint, Region};
-use aws_smithy_http::body::{Error, SdkBody};
+use aws_smithy_http::body::{self, SdkBody};
 use bytes::Bytes;
 use http::header::HeaderMap;
 use http_body::combinators::BoxBody;
@@ -12,7 +12,6 @@ use rand::seq::SliceRandom;
 use rand::Rng;
 use std::array;
 use std::env;
-use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use uuid::Uuid;
@@ -59,7 +58,7 @@ async fn check(size: usize, concurrency_limit: Option<usize>) {
         ))
         .bucket(&bucket)
         .key(&key)
-        .send::<Error>(
+        .send::<anyhow::Error>(
             PART_SIZE,
             concurrency_limit.map(|limit| limit.try_into().unwrap()),
         )
@@ -127,11 +126,11 @@ async fn test_concurrent_unlimited() {
 
 #[tokio::test]
 async fn test_abort() {
-    struct B<const N: usize>(array::IntoIter<Result<Bytes, Error>, N>);
+    struct B<const N: usize>(array::IntoIter<Result<Bytes, body::Error>, N>);
 
     impl<const N: usize> Body for B<N> {
         type Data = Bytes;
-        type Error = Error;
+        type Error = body::Error;
 
         fn poll_data(
             self: Pin<&mut Self>,
@@ -158,7 +157,7 @@ async fn test_abort() {
         Ok((0..*PART_SIZE.start() * 5 / 4)
             .map(|_| rng.gen())
             .collect::<Bytes>()),
-        Err(io::Error::new(io::ErrorKind::BrokenPipe, "error").into()),
+        Err("error".into()),
     ];
 
     MultipartUpload::new(&client)
@@ -167,7 +166,7 @@ async fn test_abort() {
         )))))
         .bucket(&bucket)
         .key(&key)
-        .send::<Error>(PART_SIZE, None)
+        .send::<anyhow::Error>(PART_SIZE, None)
         .await
         .unwrap_err();
 
