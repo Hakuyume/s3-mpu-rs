@@ -25,8 +25,8 @@ use std::ops::RangeInclusive;
 // https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html
 pub const PART_SIZE: RangeInclusive<usize> = 5 << 20..=5 << 30;
 
-pub struct MultipartUpload<'a, C, M, R> {
-    client: &'a Client<C, M, R>,
+pub struct MultipartUpload<C, M, R> {
+    client: Client<C, M, R>,
     body: ByteStream,
     bucket: Option<String>,
     key: Option<String>,
@@ -34,10 +34,10 @@ pub struct MultipartUpload<'a, C, M, R> {
 
 pub type MultipartUploadOutput = CompleteMultipartUploadOutput;
 
-impl<'a, C, M, R> MultipartUpload<'a, C, M, R> {
-    pub fn new(client: &'a Client<C, M, R>) -> Self {
+impl<C, M, R> MultipartUpload<C, M, R> {
+    pub fn new(client: &Client<C, M, R>) -> Self {
         Self {
-            client,
+            client: client.clone(),
             body: ByteStream::default(),
             bucket: None,
             key: None,
