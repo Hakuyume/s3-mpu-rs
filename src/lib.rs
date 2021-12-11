@@ -103,7 +103,7 @@ impl<C, M, R> MultipartUpload<C, M, R> {
             .set_key(self.key.clone())
             .send()
             .await?;
-        let upload_id = output.upload_id.as_ref().unwrap();
+        let upload_id = output.upload_id;
 
         let stream = split::split(self.body, part_size)
             .map_ok(|part| {
@@ -116,12 +116,12 @@ impl<C, M, R> MultipartUpload<C, M, R> {
                         .content_md5(base64::encode(part.content_md5))
                         .set_key(self.key.clone())
                         .part_number(part.part_number as _)
-                        .upload_id(upload_id)
+                        .set_upload_id(upload_id.clone())
                         .send()
                         .map_ok({
                             move |output| {
                                 CompletedPart::builder()
-                                    .e_tag(output.e_tag.unwrap())
+                                    .set_e_tag(output.e_tag)
                                     .part_number(part.part_number as _)
                                     .build()
                             }
@@ -145,7 +145,7 @@ impl<C, M, R> MultipartUpload<C, M, R> {
                         .set_parts(Some(completed_parts))
                         .build(),
                 )
-                .upload_id(upload_id)
+                .set_upload_id(upload_id.clone())
                 .send()
                 .await
                 .map_err(E::from)
@@ -155,7 +155,7 @@ impl<C, M, R> MultipartUpload<C, M, R> {
                 .abort_multipart_upload()
                 .set_bucket(self.bucket.clone())
                 .set_key(self.key.clone())
-                .upload_id(upload_id)
+                .set_upload_id(upload_id.clone())
                 .send()
                 .map(|_| Err(e))
         })
