@@ -105,8 +105,8 @@ impl Inner {
 
             self.part_number += 1;
             Some(Part {
-                body: mem::replace(&mut self.part_body, Vec::new()),
-                content_length: mem::replace(&mut self.part_content_length, 0),
+                body: mem::take(&mut self.part_body),
+                content_length: mem::take(&mut self.part_content_length),
                 content_md5: self.part_content_md5.finalize_reset(),
                 part_number: self.part_number,
             })
@@ -142,16 +142,16 @@ mod tests {
     async fn test_split() {
         let mut parts = split::<_, ()>(
             futures::stream::iter(
-                vec![
-                    &[0, 1, 2][..],
-                    &[3, 4],
-                    &[
+                [
+                    Bytes::from_static(&[0, 1, 2]),
+                    Bytes::from_static(&[3, 4]),
+                    Bytes::from_static(&[
                         5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
-                    ],
-                    &[22, 23],
+                    ]),
+                    Bytes::from_static(&[22, 23]),
                 ]
                 .into_iter()
-                .map(|chunk| Ok(Bytes::from_static(chunk))),
+                .map(Ok),
             ),
             4..=8,
         );

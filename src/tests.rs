@@ -1,21 +1,31 @@
-use super::{multipart_upload, MultipartUploadRequest, PART_SIZE};
+use super::{MultipartUpload, PART_SIZE};
+use crate::into_byte_stream;
+use aws_config::default_provider::credentials;
+use aws_sdk_s3::ByteStream;
+use aws_sdk_s3::{Client, Config, Endpoint, Region};
+use aws_smithy_http::body::{self, SdkBody};
 use bytes::Bytes;
+use http::header::HeaderMap;
+use http_body::combinators::BoxBody;
+use http_body::Body;
 use rand::seq::SliceRandom;
 use rand::Rng;
-use rusoto_core::Region;
-use rusoto_s3::{GetObjectRequest, ListMultipartUploadsRequest, S3Client, S3};
-use std::convert::TryInto;
+use std::array;
 use std::env;
-use std::error::Error;
-use std::io;
-use tokio::io::AsyncReadExt;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use uuid::Uuid;
 
-fn context() -> (S3Client, String, String) {
-    let client = S3Client::new(Region::Custom {
-        name: "custom".to_owned(),
-        endpoint: env::var("ENDPOINT").unwrap(),
-    });
+async fn context() -> (Client, String, String) {
+    let client = Client::from_conf(
+        Config::builder()
+            .credentials_provider(credentials::default_provider().await)
+            .endpoint_resolver(Endpoint::immutable(
+                env::var("ENDPOINT").unwrap().parse().unwrap(),
+            ))
+            .region(Region::from_static("custom"))
+            .build(),
+    );
     let bucket = env::var("BUCKET").unwrap();
     let key = Uuid::new_v4().to_string();
     (client, bucket, key)
@@ -39,43 +49,32 @@ where
 async fn check(size: usize, concurrency_limit: Option<usize>) {
     let mut rng = rand::thread_rng();
 
-    let (client, bucket, key) = context();
+    let (client, bucket, key) = context().await;
     let body = (0..size).map(|_| rng.gen()).collect::<Bytes>();
 
-    let output = multipart_upload::<_, _, Box<dyn Error>>(
-        &client,
-        MultipartUploadRequest {
-            body: futures::stream::iter(into_chunks(body.clone(), &mut rng).map(Ok)),
-            bucket: bucket.clone(),
-            key: key.clone(),
-        },
-        PART_SIZE,
-        concurrency_limit.map(|limit| limit.try_into().unwrap()),
-    )
-    .await
-    .unwrap();
-
+    let output = MultipartUpload::new(&client)
+        .body(into_byte_stream::into_byte_stream(
+            into_chunks(body.clone(), &mut rng).collect(),
+        ))
+        .bucket(&bucket)
+        .key(&key)
+        .send::<anyhow::Error>(
+            PART_SIZE,
+            concurrency_limit.map(|limit| limit.try_into().unwrap()),
+        )
+        .await
+        .unwrap();
     assert_eq!(output.bucket.as_ref().unwrap(), &bucket);
     assert_eq!(output.key.as_ref().unwrap(), &key);
 
     let output = client
-        .get_object(GetObjectRequest {
-            bucket,
-            key,
-            ..GetObjectRequest::default()
-        })
+        .get_object()
+        .bucket(&bucket)
+        .key(&key)
+        .send()
         .await
         .unwrap();
-
-    let mut buf = Vec::new();
-    output
-        .body
-        .unwrap()
-        .into_async_read()
-        .read_to_end(&mut buf)
-        .await
-        .unwrap();
-    assert_eq!(buf, body);
+    assert_eq!(output.body.collect().await.unwrap().into_bytes(), body);
 }
 
 #[test]
@@ -127,42 +126,54 @@ async fn test_concurrent_unlimited() {
 
 #[tokio::test]
 async fn test_abort() {
+    struct B<const N: usize>(array::IntoIter<Result<Bytes, body::Error>, N>);
+
+    impl<const N: usize> Body for B<N> {
+        type Data = Bytes;
+        type Error = body::Error;
+
+        fn poll_data(
+            self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+        ) -> Poll<Option<Result<Self::Data, Self::Error>>> {
+            Poll::Ready(self.get_mut().0.next())
+        }
+
+        fn poll_trailers(
+            self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+        ) -> Poll<Result<Option<HeaderMap>, Self::Error>> {
+            Poll::Ready(Ok(None))
+        }
+    }
+
     let mut rng = rand::thread_rng();
 
-    let (client, bucket, key) = context();
-    let body = vec![
+    let (client, bucket, key) = context().await;
+    let body = [
         Ok((0..*PART_SIZE.start() * 3 / 4)
             .map(|_| rng.gen())
             .collect::<Bytes>()),
         Ok((0..*PART_SIZE.start() * 5 / 4)
             .map(|_| rng.gen())
             .collect::<Bytes>()),
-        Err(io::Error::new(io::ErrorKind::BrokenPipe, "error").into()),
+        Err("error".into()),
     ];
 
-    let e = multipart_upload::<_, _, Box<dyn Error>>(
-        &client,
-        MultipartUploadRequest {
-            body: futures::stream::iter(body),
-            bucket: bucket.clone(),
-            key: key.clone(),
-        },
-        PART_SIZE,
-        None,
-    )
-    .await
-    .unwrap_err();
-
-    assert_eq!(
-        e.downcast::<io::Error>().unwrap().kind(),
-        io::ErrorKind::BrokenPipe
-    );
+    MultipartUpload::new(&client)
+        .body(ByteStream::new(SdkBody::from_dyn(BoxBody::new(B(
+            body.into_iter()
+        )))))
+        .bucket(&bucket)
+        .key(&key)
+        .send::<anyhow::Error>(PART_SIZE, None)
+        .await
+        .unwrap_err();
 
     let output = client
-        .list_multipart_uploads(ListMultipartUploadsRequest {
-            bucket,
-            ..ListMultipartUploadsRequest::default()
-        })
+        .list_multipart_uploads()
+        .bucket(&bucket)
+        .send()
         .await
         .unwrap();
 

@@ -2,7 +2,7 @@
 name = "s3-mpu"
 version = "0.2.0"
 authors = ["Toru Ogawa <Hakuyume@users.noreply.github.com>"]
-edition = "2018"
+edition = "2021"
 description = "Multipart upload helper for rusoto_s3"
 license = "BSD-3-Clause"
 documentation = "https://docs.rs/crate/s3-mpu/"
@@ -12,21 +12,22 @@ exclude = [".github"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[features]
-default = ["native-tls"]
-native-tls = ["rusoto_core/native-tls", "rusoto_s3/native-tls"]
-rustls = ["rusoto_core/rustls", "rusoto_s3/rustls"]
-
 [dependencies]
+aws-http = "0.2"
+aws-sdk-s3 = "0.2"
+aws-smithy-client = "0.32"
+aws-smithy-http = "0.32"
 base64 = "0.13"
 bytes = "1"
 futures = "0.3"
+http = "0.2"
+http-body = "0.4"
 md-5 = "0.9"
 pin-project = "1"
-rusoto_core = { version = "0.46", default-features = false }
-rusoto_s3 = { version = "0.46", default-features = false }
 
 [dev-dependencies]
+anyhow = "1"
+aws-config = "0.2"
 rand = "0.8"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 uuid = { version = "0.8", features = ["v4"] }
