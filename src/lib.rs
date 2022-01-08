@@ -1,4 +1,3 @@
-mod dispatch;
 mod into_byte_stream;
 mod split;
 
@@ -107,33 +106,33 @@ impl<C, M, R> MultipartUpload<C, M, R> {
 
         let stream = split::split(self.body, part_size)
             .map_ok(|part| {
-                Box::pin(
-                    self.client
-                        .upload_part()
-                        .body(into_byte_stream::into_byte_stream(part.body))
-                        .set_bucket(self.bucket.clone())
-                        .content_length(part.content_length as _)
-                        .content_md5(base64::encode(part.content_md5))
-                        .set_key(self.key.clone())
-                        .part_number(part.part_number as _)
-                        .set_upload_id(upload_id.clone())
-                        .send()
-                        .map_ok({
-                            move |output| {
-                                CompletedPart::builder()
-                                    .set_e_tag(output.e_tag)
-                                    .part_number(part.part_number as _)
-                                    .build()
-                            }
-                        })
-                        .err_into(),
-                )
+                self.client
+                    .upload_part()
+                    .body(into_byte_stream::into_byte_stream(part.body))
+                    .set_bucket(self.bucket.clone())
+                    .content_length(part.content_length as _)
+                    .content_md5(base64::encode(part.content_md5))
+                    .set_key(self.key.clone())
+                    .part_number(part.part_number as _)
+                    .set_upload_id(upload_id.clone())
+                    .send()
+                    .map_ok({
+                        move |output| {
+                            CompletedPart::builder()
+                                .set_e_tag(output.e_tag)
+                                .part_number(part.part_number as _)
+                                .build()
+                        }
+                    })
+                    .err_into()
             })
             .map_err(E::from);
 
         (async {
-            let mut completed_parts =
-                dispatch::dispatch_concurrent(stream, concurrency_limit).await?;
+            let mut completed_parts = stream
+                .try_buffer_unordered(concurrency_limit.map_or(usize::MAX, NonZeroUsize::get))
+                .try_collect::<Vec<_>>()
+                .await?;
             completed_parts.sort_by_key(|completed_part| completed_part.part_number);
 
             self.client
