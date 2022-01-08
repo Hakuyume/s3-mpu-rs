@@ -1,4 +1,3 @@
-mod dispatch;
 mod into_byte_stream;
 mod split;
 
@@ -132,8 +131,10 @@ impl<C, M, R> MultipartUpload<C, M, R> {
             .map_err(E::from);
 
         (async {
-            let mut completed_parts =
-                dispatch::dispatch_concurrent(stream, concurrency_limit).await?;
+            let mut completed_parts = stream
+                .try_buffer_unordered(concurrency_limit.map_or(usize::MAX, NonZeroUsize::get))
+                .try_collect::<Vec<_>>()
+                .await?;
             completed_parts.sort_by_key(|completed_part| completed_part.part_number);
 
             self.client
