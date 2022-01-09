@@ -1,7 +1,7 @@
 mod into_byte_stream;
 mod split;
 
-use aws_http::AwsErrorRetryPolicy;
+use aws_http::retry::AwsErrorRetryPolicy;
 use aws_sdk_s3::error::{
     AbortMultipartUploadError, CompleteMultipartUploadError, CreateMultipartUploadError,
     UploadPartError,

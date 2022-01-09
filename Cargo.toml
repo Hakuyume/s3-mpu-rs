@@ -13,10 +13,10 @@ exclude = [".github"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-aws-http = "0.3"
-aws-sdk-s3 = "0.3"
-aws-smithy-client = "0.33"
-aws-smithy-http = "0.33"
+aws-http = "0.4"
+aws-sdk-s3 = "0.4"
+aws-smithy-client = "0.34"
+aws-smithy-http = "0.34"
 base64 = "0.13"
 bytes = "1"
 futures = "0.3"
@@ -27,7 +27,7 @@ pin-project = "1"
 
 [dev-dependencies]
 anyhow = "1"
-aws-config = "0.3"
+aws-config = "0.4"
 rand = "0.8"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 uuid = { version = "0.8", features = ["v4"] }
