@@ -1,7 +1,7 @@
 use super::{MultipartUpload, PART_SIZE};
 use crate::into_byte_stream;
 use aws_config::default_provider::credentials;
-use aws_sdk_s3::ByteStream;
+use aws_sdk_s3::types::ByteStream;
 use aws_sdk_s3::{Client, Config, Endpoint, Region};
 use aws_smithy_http::body::{self, SdkBody};
 use bytes::Bytes;

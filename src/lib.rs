@@ -1,22 +1,13 @@
 mod into_byte_stream;
 mod split;
 
-use aws_http::retry::AwsErrorRetryPolicy;
 use aws_sdk_s3::error::{
-    AbortMultipartUploadError, CompleteMultipartUploadError, CreateMultipartUploadError,
-    UploadPartError,
+    CompleteMultipartUploadError, CreateMultipartUploadError, UploadPartError,
 };
 use aws_sdk_s3::model::{CompletedMultipartUpload, CompletedPart};
-use aws_sdk_s3::operation::{
-    AbortMultipartUpload, CompleteMultipartUpload, CreateMultipartUpload, UploadPart,
-};
-use aws_sdk_s3::output::{
-    AbortMultipartUploadOutput, CompleteMultipartUploadOutput, CreateMultipartUploadOutput,
-    UploadPartOutput,
-};
-use aws_sdk_s3::{ByteStream, Client, SdkError};
-use aws_smithy_client::bounds::{SmithyConnector, SmithyMiddleware, SmithyRetryPolicy};
-use aws_smithy_client::retry::NewRequestPolicy;
+use aws_sdk_s3::output::CompleteMultipartUploadOutput;
+use aws_sdk_s3::types::{ByteStream, SdkError};
+use aws_sdk_s3::Client;
 use futures::{FutureExt, TryFutureExt, TryStreamExt};
 use std::num::NonZeroUsize;
 use std::ops::RangeInclusive;
@@ -24,8 +15,8 @@ use std::ops::RangeInclusive;
 // https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html
 pub const PART_SIZE: RangeInclusive<usize> = 5 << 20..=5 << 30;
 
-pub struct MultipartUpload<C, M, R> {
-    client: Client<C, M, R>,
+pub struct MultipartUpload {
+    client: Client,
     body: ByteStream,
     bucket: Option<String>,
     key: Option<String>,
@@ -33,8 +24,8 @@ pub struct MultipartUpload<C, M, R> {
 
 pub type MultipartUploadOutput = CompleteMultipartUploadOutput;
 
-impl<C, M, R> MultipartUpload<C, M, R> {
-    pub fn new(client: &Client<C, M, R>) -> Self {
+impl MultipartUpload {
+    pub fn new(client: &Client) -> Self {
         Self {
             client: client.clone(),
             body: ByteStream::default(),
@@ -70,26 +61,6 @@ impl<C, M, R> MultipartUpload<C, M, R> {
         concurrency_limit: Option<NonZeroUsize>,
     ) -> Result<MultipartUploadOutput, E>
     where
-        C: SmithyConnector,
-        M: SmithyMiddleware<C>,
-        R: NewRequestPolicy,
-        R::Policy: SmithyRetryPolicy<
-                CreateMultipartUpload,
-                CreateMultipartUploadOutput,
-                CreateMultipartUploadError,
-                AwsErrorRetryPolicy,
-            > + SmithyRetryPolicy<UploadPart, UploadPartOutput, UploadPartError, AwsErrorRetryPolicy>
-            + SmithyRetryPolicy<
-                CompleteMultipartUpload,
-                CompleteMultipartUploadOutput,
-                CompleteMultipartUploadError,
-                AwsErrorRetryPolicy,
-            > + SmithyRetryPolicy<
-                AbortMultipartUpload,
-                AbortMultipartUploadOutput,
-                AbortMultipartUploadError,
-                AwsErrorRetryPolicy,
-            >,
         E: From<aws_smithy_http::byte_stream::Error>
             + From<SdkError<CreateMultipartUploadError>>
             + From<SdkError<UploadPartError>>
