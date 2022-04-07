@@ -160,7 +160,7 @@ async fn test_abort() {
         Err("error".into()),
     ];
 
-    MultipartUpload::new(&client)
+    let (_, abort) = MultipartUpload::new(&client)
         .body(ByteStream::new(SdkBody::from_dyn(BoxBody::new(B(
             body.into_iter()
         )))))
@@ -169,6 +169,7 @@ async fn test_abort() {
         .send::<anyhow::Error>(PART_SIZE, None)
         .await
         .unwrap_err();
+    abort.unwrap().send().await.unwrap();
 
     let output = client
         .list_multipart_uploads()
@@ -177,9 +178,10 @@ async fn test_abort() {
         .await
         .unwrap();
 
-    if let Some(uploads) = &output.uploads {
-        assert!(!uploads
-            .iter()
-            .any(|upload| upload.key.as_ref() == Some(&key)));
-    }
+    assert!(output
+        .uploads
+        .unwrap_or_default()
+        .iter()
+        .find(|upload| upload.key.as_ref() == Some(&key))
+        .is_none());
 }

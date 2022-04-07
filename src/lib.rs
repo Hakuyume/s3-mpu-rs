@@ -1,6 +1,7 @@
 mod into_byte_stream;
 mod split;
 
+use aws_sdk_s3::client::fluent_builders::AbortMultipartUpload;
 use aws_sdk_s3::error::{
     CompleteMultipartUploadError, CreateMultipartUploadError, UploadPartError,
 };
@@ -8,7 +9,7 @@ use aws_sdk_s3::model::{CompletedMultipartUpload, CompletedPart};
 use aws_sdk_s3::output::CompleteMultipartUploadOutput;
 use aws_sdk_s3::types::{ByteStream, SdkError};
 use aws_sdk_s3::Client;
-use futures::{FutureExt, TryFutureExt, TryStreamExt};
+use futures::{TryFutureExt, TryStreamExt};
 use std::num::NonZeroUsize;
 use std::ops::RangeInclusive;
 
@@ -59,7 +60,7 @@ impl MultipartUpload {
         self,
         part_size: RangeInclusive<usize>,
         concurrency_limit: Option<NonZeroUsize>,
-    ) -> Result<MultipartUploadOutput, E>
+    ) -> Result<MultipartUploadOutput, (E, Option<AbortMultipartUpload>)>
     where
         E: From<aws_smithy_http::byte_stream::Error>
             + From<SdkError<CreateMultipartUploadError>>
@@ -72,10 +73,19 @@ impl MultipartUpload {
             .set_bucket(self.bucket.clone())
             .set_key(self.key.clone())
             .send()
+            .map_err(|err| (err.into(), None))
             .await?;
         let upload_id = output.upload_id;
 
-        let stream = split::split(self.body, part_size)
+        let abort = || {
+            self.client
+                .abort_multipart_upload()
+                .set_bucket(self.bucket.clone())
+                .set_key(self.key.clone())
+                .set_upload_id(upload_id.clone())
+        };
+
+        let parts = split::split(self.body, part_size)
             .map_ok(|part| {
                 self.client
                     .upload_part()
@@ -97,39 +107,29 @@ impl MultipartUpload {
                     })
                     .err_into()
             })
-            .map_err(E::from);
+            .err_into();
 
-        (async {
-            let mut completed_parts = stream
-                .try_buffer_unordered(concurrency_limit.map_or(usize::MAX, NonZeroUsize::get))
-                .try_collect::<Vec<_>>()
-                .await?;
-            completed_parts.sort_by_key(|completed_part| completed_part.part_number);
+        let mut completed_parts = parts
+            .try_buffer_unordered(concurrency_limit.map_or(usize::MAX, NonZeroUsize::get))
+            .try_collect::<Vec<_>>()
+            .map_err(|err| (err, Some(abort())))
+            .await?;
 
-            self.client
-                .complete_multipart_upload()
-                .set_bucket(self.bucket.clone())
-                .set_key(self.key.clone())
-                .multipart_upload(
-                    CompletedMultipartUpload::builder()
-                        .set_parts(Some(completed_parts))
-                        .build(),
-                )
-                .set_upload_id(upload_id.clone())
-                .send()
-                .err_into()
-                .await
-        })
-        .or_else(|e| {
-            self.client
-                .abort_multipart_upload()
-                .set_bucket(self.bucket.clone())
-                .set_key(self.key.clone())
-                .set_upload_id(upload_id.clone())
-                .send()
-                .map(|_| Err(e))
-        })
-        .await
+        completed_parts.sort_by_key(|completed_part| completed_part.part_number);
+
+        self.client
+            .complete_multipart_upload()
+            .set_bucket(self.bucket.clone())
+            .set_key(self.key.clone())
+            .multipart_upload(
+                CompletedMultipartUpload::builder()
+                    .set_parts(Some(completed_parts))
+                    .build(),
+            )
+            .set_upload_id(upload_id.clone())
+            .send()
+            .map_err(|err| (err.into(), Some(abort())))
+            .await
     }
 }
 
