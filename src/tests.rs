@@ -20,9 +20,7 @@ async fn context() -> (Client, String, String) {
     let client = Client::from_conf(
         Config::builder()
             .credentials_provider(credentials::default_provider().await)
-            .endpoint_resolver(Endpoint::immutable(
-                env::var("ENDPOINT").unwrap().parse().unwrap(),
-            ))
+            .endpoint_resolver(Endpoint::immutable(env::var("ENDPOINT").unwrap()).unwrap())
             .region(Region::from_static("custom"))
             .build(),
     );
