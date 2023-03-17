@@ -2,7 +2,7 @@ use super::{MultipartUpload, PART_SIZE};
 use crate::into_byte_stream;
 use aws_config::default_provider::credentials;
 use aws_sdk_s3::types::ByteStream;
-use aws_sdk_s3::{Client, Config, Endpoint, Region};
+use aws_sdk_s3::{Client, Config, Region};
 use aws_smithy_http::body::{self, SdkBody};
 use bytes::Bytes;
 use http::header::HeaderMap;
@@ -20,8 +20,9 @@ async fn context() -> (Client, String, String) {
     let client = Client::from_conf(
         Config::builder()
             .credentials_provider(credentials::default_provider().await)
-            .endpoint_resolver(Endpoint::immutable(env::var("ENDPOINT").unwrap()).unwrap())
-            .region(Region::from_static("custom"))
+            .endpoint_url(env::var("ENDPOINT").unwrap())
+            .force_path_style(true)
+            .region(Region::from_static("test"))
             .build(),
     );
     let bucket = env::var("BUCKET").unwrap();
