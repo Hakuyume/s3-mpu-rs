@@ -1,13 +1,15 @@
 mod into_byte_stream;
 mod split;
 
-use aws_sdk_s3::client::fluent_builders::AbortMultipartUpload;
-use aws_sdk_s3::error::{
-    CompleteMultipartUploadError, CreateMultipartUploadError, UploadPartError,
+use aws_sdk_s3::error::SdkError;
+use aws_sdk_s3::operation::abort_multipart_upload::builders::AbortMultipartUploadFluentBuilder;
+use aws_sdk_s3::operation::complete_multipart_upload::{
+    CompleteMultipartUploadError, CompleteMultipartUploadOutput,
 };
-use aws_sdk_s3::model::{CompletedMultipartUpload, CompletedPart};
-use aws_sdk_s3::output::CompleteMultipartUploadOutput;
-use aws_sdk_s3::types::{ByteStream, SdkError};
+use aws_sdk_s3::operation::create_multipart_upload::CreateMultipartUploadError;
+use aws_sdk_s3::operation::upload_part::UploadPartError;
+use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
 use aws_sdk_s3::Client;
 use futures::{TryFutureExt, TryStreamExt};
 use std::num::NonZeroUsize;
@@ -60,7 +62,7 @@ impl MultipartUpload {
         self,
         part_size: RangeInclusive<usize>,
         concurrency_limit: Option<NonZeroUsize>,
-    ) -> Result<MultipartUploadOutput, (E, Option<AbortMultipartUpload>)>
+    ) -> Result<MultipartUploadOutput, (E, Option<AbortMultipartUploadFluentBuilder>)>
     where
         E: From<aws_smithy_http::byte_stream::error::Error>
             + From<SdkError<CreateMultipartUploadError>>
