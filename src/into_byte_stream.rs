@@ -1,4 +1,4 @@
-use aws_sdk_s3::types::ByteStream;
+use aws_sdk_s3::primitives::ByteStream;
 use aws_smithy_http::body::{Error, SdkBody};
 use bytes::Bytes;
 use http::header::HeaderMap;
@@ -42,7 +42,7 @@ pub fn into_byte_stream(body: Vec<Bytes>) -> ByteStream {
 #[cfg(test)]
 mod tests {
     use super::into_byte_stream;
-    use aws_sdk_s3::types::ByteStream;
+    use aws_sdk_s3::primitives::ByteStream;
     use bytes::Bytes;
 
     #[tokio::test]
