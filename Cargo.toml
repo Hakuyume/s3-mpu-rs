@@ -13,8 +13,8 @@ exclude = [".github"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-aws-sdk-s3 = "0.29"
-aws-smithy-http = "0.56"
+aws-sdk-s3 = "0.34"
+aws-smithy-http = "0.57"
 base64 = "0.13"
 bytes = "1"
 futures = "0.3"
