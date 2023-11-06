@@ -35,7 +35,7 @@ pub fn into_byte_stream(body: Vec<Bytes>) -> ByteStream {
 
     let body = Arc::<[_]>::from(Box::from(body));
     ByteStream::new(SdkBody::retryable(move || {
-        SdkBody::from_dyn(BoxBody::new(B(body.clone(), 0)))
+        SdkBody::from_body_0_4(BoxBody::new(B(body.clone(), 0)))
     }))
 }
 

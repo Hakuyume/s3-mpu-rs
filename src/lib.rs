@@ -8,13 +8,16 @@ use aws_sdk_s3::operation::complete_multipart_upload::{
 };
 use aws_sdk_s3::operation::create_multipart_upload::CreateMultipartUploadError;
 use aws_sdk_s3::operation::upload_part::UploadPartError;
-use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::primitives::{ByteStream, ByteStreamError};
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
 use aws_sdk_s3::Client;
 use aws_smithy_types::body::SdkBody;
-use futures::{TryFutureExt, TryStreamExt};
+use bytes::Bytes;
+use futures::{Stream, TryFutureExt, TryStreamExt};
 use std::num::NonZeroUsize;
 use std::ops::RangeInclusive;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 // https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html
 pub const PART_SIZE: RangeInclusive<usize> = 5 << 20..=5 << 30;
@@ -25,6 +28,8 @@ pub struct MultipartUpload {
     bucket: Option<String>,
     key: Option<String>,
 }
+
+pub(crate) struct WrappedByteStream(ByteStream);
 
 pub type MultipartUploadOutput = CompleteMultipartUploadOutput;
 
@@ -88,7 +93,7 @@ impl MultipartUpload {
                 .set_upload_id(upload_id.clone())
         };
 
-        let parts = split::split(self.body, part_size)
+        let parts = split::split(WrappedByteStream::new(self.body), part_size)
             .map_ok(|part| {
                 self.client
                     .upload_part()
@@ -133,6 +138,22 @@ impl MultipartUpload {
             .send()
             .map_err(|err| (err.into(), Some(abort())))
             .await
+    }
+}
+
+impl WrappedByteStream {
+    fn new(stream: ByteStream) -> Self {
+        Self(stream)
+    }
+}
+
+impl Unpin for WrappedByteStream {}
+
+impl Stream for WrappedByteStream {
+    type Item = Result<Bytes, ByteStreamError>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        Pin::new(&mut self.0).poll_next(cx)
     }
 }
 
