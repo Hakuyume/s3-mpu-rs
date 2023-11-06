@@ -14,7 +14,7 @@ exclude = [".github"]
 
 [dependencies]
 aws-sdk-s3 = "0.35"
-aws-smithy-http = "0.57"
+aws-smithy-types = "0.57"
 base64 = "0.13"
 bytes = "1"
 futures = "0.3"

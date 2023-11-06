@@ -1,5 +1,5 @@
 use aws_sdk_s3::primitives::ByteStream;
-use aws_smithy_http::body::{Error, SdkBody};
+use aws_smithy_types::body::{Error, SdkBody};
 use bytes::Bytes;
 use http::header::HeaderMap;
 use http_body::combinators::BoxBody;
