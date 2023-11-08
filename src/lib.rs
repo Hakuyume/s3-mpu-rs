@@ -8,13 +8,13 @@ use aws_sdk_s3::operation::complete_multipart_upload::{
 };
 use aws_sdk_s3::operation::create_multipart_upload::CreateMultipartUploadError;
 use aws_sdk_s3::operation::upload_part::UploadPartError;
-use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::primitives::{ByteStream, SdkBody};
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
 use aws_sdk_s3::Client;
-use aws_smithy_http::body::SdkBody;
 use futures::{TryFutureExt, TryStreamExt};
 use std::num::NonZeroUsize;
 use std::ops::RangeInclusive;
+use std::pin::Pin;
 
 // https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html
 pub const PART_SIZE: RangeInclusive<usize> = 5 << 20..=5 << 30;
@@ -60,12 +60,12 @@ impl MultipartUpload {
     }
 
     pub async fn send<E>(
-        self,
+        mut self,
         part_size: RangeInclusive<usize>,
         concurrency_limit: Option<NonZeroUsize>,
     ) -> Result<MultipartUploadOutput, (E, Option<AbortMultipartUploadFluentBuilder>)>
     where
-        E: From<aws_smithy_http::byte_stream::error::Error>
+        E: From<aws_smithy_types::byte_stream::error::Error>
             + From<SdkError<CreateMultipartUploadError, http::Response<SdkBody>>>
             + From<SdkError<UploadPartError, http::Response<SdkBody>>>
             + From<SdkError<CompleteMultipartUploadError, http::Response<SdkBody>>>,
@@ -88,29 +88,32 @@ impl MultipartUpload {
                 .set_upload_id(upload_id.clone())
         };
 
-        let parts = split::split(self.body, part_size)
-            .map_ok(|part| {
-                self.client
-                    .upload_part()
-                    .body(into_byte_stream::into_byte_stream(part.body))
-                    .set_bucket(self.bucket.clone())
-                    .content_length(part.content_length as _)
-                    .content_md5(base64::encode(part.content_md5))
-                    .set_key(self.key.clone())
-                    .part_number(part.part_number as _)
-                    .set_upload_id(upload_id.clone())
-                    .send()
-                    .map_ok({
-                        move |output| {
-                            CompletedPart::builder()
-                                .set_e_tag(output.e_tag)
-                                .part_number(part.part_number as _)
-                                .build()
-                        }
-                    })
-                    .err_into()
-            })
-            .err_into();
+        let parts = split::split(
+            futures::stream::poll_fn(move |cx| Pin::new(&mut self.body).poll_next(cx)),
+            part_size,
+        )
+        .map_ok(|part| {
+            self.client
+                .upload_part()
+                .body(into_byte_stream::into_byte_stream(part.body))
+                .set_bucket(self.bucket.clone())
+                .content_length(part.content_length as _)
+                .content_md5(base64::encode(part.content_md5))
+                .set_key(self.key.clone())
+                .part_number(part.part_number as _)
+                .set_upload_id(upload_id.clone())
+                .send()
+                .map_ok({
+                    move |output| {
+                        CompletedPart::builder()
+                            .set_e_tag(output.e_tag)
+                            .part_number(part.part_number as _)
+                            .build()
+                    }
+                })
+                .err_into()
+        })
+        .err_into();
 
         let mut completed_parts = parts
             .try_buffer_unordered(concurrency_limit.map_or(usize::MAX, NonZeroUsize::get))
