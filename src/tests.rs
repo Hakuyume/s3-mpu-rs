@@ -2,9 +2,9 @@ use super::{MultipartUpload, PART_SIZE};
 use crate::into_byte_stream;
 use aws_config::default_provider::credentials;
 use aws_sdk_s3::config::Region;
-use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::primitives::{ByteStream, SdkBody};
 use aws_sdk_s3::{Client, Config};
-use aws_smithy_http::body::{self, SdkBody};
+use aws_smithy_types::body;
 use bytes::Bytes;
 use http::header::HeaderMap;
 use http_body::combinators::BoxBody;
@@ -161,8 +161,8 @@ async fn test_abort() {
     ];
 
     let (_, abort) = MultipartUpload::new(&client)
-        .body(ByteStream::new(SdkBody::from_dyn(BoxBody::new(B(
-            body.into_iter()
+        .body(ByteStream::new(SdkBody::from_body_0_4(BoxBody::new(B(
+            body.into_iter(),
         )))))
         .bucket(&bucket)
         .key(&key)

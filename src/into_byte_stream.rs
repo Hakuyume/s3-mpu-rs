@@ -1,5 +1,5 @@
-use aws_sdk_s3::primitives::ByteStream;
-use aws_smithy_http::body::{Error, SdkBody};
+use aws_sdk_s3::primitives::{ByteStream, SdkBody};
+use aws_smithy_types::body::Error;
 use bytes::Bytes;
 use http::header::HeaderMap;
 use http_body::combinators::BoxBody;
@@ -35,7 +35,7 @@ pub fn into_byte_stream(body: Vec<Bytes>) -> ByteStream {
 
     let body = Arc::<[_]>::from(Box::from(body));
     ByteStream::new(SdkBody::retryable(move || {
-        SdkBody::from_dyn(BoxBody::new(B(body.clone(), 0)))
+        SdkBody::from_body_0_4(BoxBody::new(B(body.clone(), 0)))
     }))
 }
 
