@@ -20,6 +20,7 @@ use uuid::Uuid;
 async fn context() -> (Client, String, String) {
     let client = Client::from_conf(
         Config::builder()
+            .behavior_version_latest()
             .credentials_provider(credentials::default_provider().await)
             .endpoint_url(env::var("ENDPOINT").unwrap())
             .force_path_style(true)

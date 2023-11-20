@@ -8,7 +8,7 @@ use aws_sdk_s3::operation::complete_multipart_upload::{
 };
 use aws_sdk_s3::operation::create_multipart_upload::CreateMultipartUploadError;
 use aws_sdk_s3::operation::upload_part::UploadPartError;
-use aws_sdk_s3::primitives::{ByteStream, SdkBody};
+use aws_sdk_s3::primitives::{ByteStream, ByteStreamError};
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
 use aws_sdk_s3::Client;
 use futures::{TryFutureExt, TryStreamExt};
@@ -66,9 +66,10 @@ impl MultipartUpload {
     ) -> Result<MultipartUploadOutput, (E, Option<AbortMultipartUploadFluentBuilder>)>
     where
         E: From<aws_smithy_types::byte_stream::error::Error>
-            + From<SdkError<CreateMultipartUploadError, http::Response<SdkBody>>>
-            + From<SdkError<UploadPartError, http::Response<SdkBody>>>
-            + From<SdkError<CompleteMultipartUploadError, http::Response<SdkBody>>>,
+            + From<SdkError<CreateMultipartUploadError>>
+            + From<SdkError<UploadPartError>>
+            + From<SdkError<CompleteMultipartUploadError>>
+            + From<ByteStreamError>,
     {
         let output = self
             .client
