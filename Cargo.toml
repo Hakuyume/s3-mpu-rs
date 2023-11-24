@@ -13,7 +13,7 @@ exclude = [".github"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-aws-sdk-s3 = "0.38"
+aws-sdk-s3 = "0.39"
 aws-smithy-types = "1"
 base64 = "0.13"
 bytes = "1"
@@ -25,7 +25,7 @@ pin-project = "1"
 
 [dev-dependencies]
 anyhow = "1"
-aws-config = "0.101"
+aws-config = "1"
 rand = "0.8"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 uuid = { version = "1", features = ["v4"] }
