@@ -65,8 +65,7 @@ impl MultipartUpload {
         concurrency_limit: Option<NonZeroUsize>,
     ) -> Result<MultipartUploadOutput, (E, Option<AbortMultipartUploadFluentBuilder>)>
     where
-        E: From<aws_smithy_types::byte_stream::error::Error>
-            + From<SdkError<CreateMultipartUploadError>>
+        E: From<SdkError<CreateMultipartUploadError>>
             + From<SdkError<UploadPartError>>
             + From<SdkError<CompleteMultipartUploadError>>
             + From<ByteStreamError>,
